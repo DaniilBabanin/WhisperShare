@@ -10,6 +10,17 @@ integrated into the Android share sheet. Optimized for Pixel 9 / Tensor G4.
   CPU mode also works and is plenty fast for the small/base models.
 - **Multilingual.** Transcribe German, English, etc., or auto-detect. Optional translate-to-English.
 
+<p align="center">
+  <img src="img/Screenshot_20260501-102348.png" width="320" alt="WhisperShare home screen on Pixel 9">
+</p>
+
+---
+
+## Download
+
+Grab the APK from the [latest release](https://github.com/DaniilBabanin/WhisperShare/releases/latest)
+and sideload it onto your phone. arm64-v8a only (Pixel 9 / any modern Android device).
+
 ---
 
 ## Build it
