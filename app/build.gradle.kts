@@ -17,8 +17,8 @@ android {
         applicationId = "io.whispershare"
         minSdk = 31           // Android 12 — covers Pixel 9 easily
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         ndk {
             // Pixel 9 is arm64. Drop the others to keep APK small.
@@ -37,10 +37,26 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("WHISPERSHARE_KEYSTORE_PATH")
+                ?: project.findProperty("WHISPERSHARE_KEYSTORE_PATH") as String?
+                ?: "release.keystore"
+            storeFile = file(keystorePath)
+            storePassword = System.getenv("WHISPERSHARE_STORE_PASSWORD")
+                ?: project.findProperty("WHISPERSHARE_STORE_PASSWORD") as String? ?: ""
+            keyAlias = System.getenv("WHISPERSHARE_KEY_ALIAS")
+                ?: project.findProperty("WHISPERSHARE_KEY_ALIAS") as String? ?: ""
+            keyPassword = System.getenv("WHISPERSHARE_KEY_PASSWORD")
+                ?: project.findProperty("WHISPERSHARE_KEY_PASSWORD") as String? ?: ""
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

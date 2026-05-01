@@ -1,0 +1,28 @@
+WhisperShare turns voice messages into text without sending a single byte to a server. Long-press a voice note in WhatsApp, Telegram, Signal, or any voice recorder, hit Share, pick WhisperShare, and the transcript appears a moment later — ready to copy, share, or paste into a reply.
+
+Everything runs locally on your phone using whisper.cpp, the open-source C++ port of OpenAI's Whisper model. Audio never leaves the device. The only network traffic the app makes is the optional, opt-in download of a transcription model from huggingface.co the first time you tap the cloud icon next to a model.
+
+Highlights:
+
+• Local only. No cloud, no analytics, no telemetry. Works in airplane mode after the model is downloaded.
+• Share-sheet integration. Long-press → Share → WhisperShare. No copy-paste, no manual export.
+• Multilingual. Transcribe German, English, French, Spanish, Russian, and 95+ other languages, or let Whisper auto-detect.
+• Translate to English. Optional flag to translate non-English audio directly into English text.
+• Multiple model sizes. Choose Tiny (31 MB, fastest) for clear speech, Base (60 MB, recommended) as a balanced default, Small (190 MB, most accurate) for accents or noisy recordings, or English-only Base for slightly faster pure-English transcription.
+• GPU acceleration on capable devices via whisper.cpp's Vulkan backend. Falls back to CPU automatically.
+• arm64-v8a Android 12 or newer.
+
+The app contains no ads, no tracking SDKs, no crash reporters. Source code is MIT-licensed and available on GitHub.
+
+How it works:
+
+When you share an audio file, WhisperShare decodes it via Android's MediaCodec into 16 kHz mono PCM, hands it to whisper.cpp through a JNI bridge, and runs whisper_full() in a coroutine. The decoded audio and the transcript stay in app-private memory and are discarded as soon as you close the screen.
+
+Models are stored under the app's private data directory and can be deleted at any time from the home screen.
+
+Permissions used:
+
+• INTERNET — only to download Whisper models you explicitly request.
+• POST_NOTIFICATIONS — to surface transcription progress on long files.
+
+Designed for Pixel 9 / Tensor G4 but runs on any modern arm64 Android device.

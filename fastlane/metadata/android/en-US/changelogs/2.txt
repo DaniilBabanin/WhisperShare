@@ -1,0 +1,6 @@
+First public release.
+
+• Share any voice message from WhatsApp / Telegram / Signal / Voice Recorder to WhisperShare for on-device transcription.
+• Choose between Tiny / Base / Small multilingual models or English-only Base, downloaded on demand.
+• Auto language detection or manual override; optional translate-to-English mode.
+• arm64-v8a, Android 12+.

@@ -18,6 +18,12 @@ app/.cxx/
 # Logs
 *.log
 
+# Signing — never commit keystores or their decoded base64
+*.keystore
+*.jks
+release.keystore
+keystore.b64
+
 # OS
 .DS_Store
 Thumbs.db

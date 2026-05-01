@@ -16,10 +16,28 @@ integrated into the Android share sheet. Optimized for Pixel 9 / Tensor G4.
 
 ---
 
-## Download
+## Privacy
 
-Grab the APK from the [latest release](https://github.com/DaniilBabanin/WhisperShare/releases/latest)
-and sideload it onto your phone. arm64-v8a only (Pixel 9 / any modern Android device).
+Audio never leaves your device. The app's only network access is the optional,
+opt-in download of a Whisper model from `huggingface.co` the first time you tap
+the cloud icon next to a model. No analytics, no crash reporters, no third-party
+SDKs — only `INTERNET` (for that model download) and `POST_NOTIFICATIONS` (for
+transcription progress on long files) are requested.
+
+---
+
+## Install
+
+Pick whichever you prefer:
+
+- **GitHub release.** Grab `WhisperShare.apk` from the
+  [latest release](https://github.com/DaniilBabanin/WhisperShare/releases/latest)
+  and sideload it.
+- **Obtainium.** Add `https://github.com/DaniilBabanin/WhisperShare` as a source.
+  You'll get update notifications whenever a new tag is published.
+- **IzzyOnDroid.** Submission pending — once accepted, the badge will land here.
+
+arm64-v8a only (Pixel 9 / any modern Android device). Android 12 or newer.
 
 ---
 
