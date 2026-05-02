@@ -1,14 +1,15 @@
 # WhisperShare
 
-A minimal Android app that transcribes voice messages **locally** using whisper.cpp,
-integrated into the Android share sheet. Optimized for Pixel 9 / Tensor G4.
+A small Android app that transcribes voice messages on-device using whisper.cpp,
+wired into the share sheet. I built it on a Pixel 9, so that's where it's been
+tested most.
 
-- **Local only.** No audio leaves the device.
+- **Local only.** Audio never leaves the phone.
 - **Share to transcribe.** Long-press a voice note in WhatsApp / Telegram / Signal /
-  Voice Recorder → Share → WhisperShare → text appears.
-- **GPU acceleration** via whisper.cpp's Vulkan backend (Mali-G715 on Pixel 9).
-  CPU mode also works and is plenty fast for the small/base models.
-- **Multilingual.** Transcribe German, English, etc., or auto-detect. Optional translate-to-English.
+  Voice Recorder, hit Share, pick WhisperShare, get text.
+- **GPU path** via whisper.cpp's Vulkan backend (Mali-G715 on Pixel 9). CPU is
+  fast enough on the small and base models that I don't usually bother flipping it on.
+- **Multilingual.** German, English, etc., or auto-detect. Optional translate-to-English.
 
 <p align="center">
   <img src="img/00_Settings.jpg" width="240" alt="WhisperShare home screen with model selection">
@@ -20,10 +21,11 @@ integrated into the Android share sheet. Optimized for Pixel 9 / Tensor G4.
 
 ## Privacy
 
-Audio never leaves your device. The app's only network access is the
-opt-in download of a Whisper model from `huggingface.co` the first time you tap
-the cloud icon next to a model. No analytics, no crash reporters, no third-party
-SDKs — `INTERNET` (for that model download) is the only permission requested.
+Audio never leaves your device. The only network call the app makes is the
+opt-in download of a Whisper model from `huggingface.co`, which happens the first
+time you tap the cloud icon next to a model. No analytics, no crash reporters,
+no third-party SDKs. `INTERNET` (for that model download) is the only permission
+requested.
 
 Full privacy policy: <https://daniilbabanin.github.io/WhisperShare/privacy/>
 
@@ -47,14 +49,15 @@ arm64-v8a only (Pixel 9 / any modern Android device). Android 12 or newer.
 
 1. **Launch WhisperShare** once. Tap the cloud icon next to **Base (multilingual)**
    to download the default model (~60 MB). Pick it with the radio button.
-2. **Open WhatsApp** (or Telegram / Signal). Long-press a voice message → Share → WhisperShare.
-3. Wait a second or two - the text appears on screen with **Copy** / **Share** buttons.
+2. **Open WhatsApp** (or Telegram / Signal). Long-press a voice message, share to
+   WhisperShare.
+3. Wait a second or two. The text appears on screen with **Copy** / **Share** buttons.
 
 Settings:
 
-- **Use GPU when available** - only effective if you built with `whispershare.vulkan=true`.
-- **Language** - leave empty for auto-detect, or set `de` / `en` / `fr` etc.
-- **Translate to English** - if on, German/Russian/etc. audio comes out as English text.
+- **Use GPU when available.** Only does anything if you built with `whispershare.vulkan=true`.
+- **Language.** Leave empty for auto-detect, or set `de` / `en` / `fr` etc.
+- **Translate to English.** If on, German/Russian/etc. audio comes out as English text.
 
 ---
 
@@ -107,12 +110,12 @@ Pulled from `huggingface.co/ggerganov/whisper.cpp`:
 | `small-q5_1` | 190 MB | ~3× realtime | Best for accents / noise / mixed languages |
 | `base.en-q5_1` | 60 MB | ~10× realtime | English-only, slightly faster than `base-q5_1` |
 
-For German voice notes, `base-q5_1` or
-`small-q5_1` are the right picks - the English-only models won't help.
+For German voice notes, use `base-q5_1` or `small-q5_1`. The English-only models
+won't help you there.
 
-With Vulkan enabled on Pixel 9, expect roughly 1.5–2× the CPU throughput on the
-small model. On tiny/base the GPU advantage is smaller because dispatch overhead
-dominates.
+With Vulkan turned on, the small model runs roughly 1.5–2× faster than CPU on a
+Pixel 9. On tiny and base the gap is smaller because dispatch overhead eats most
+of the win.
 
 ---
 
@@ -166,17 +169,17 @@ app/
 
 ## Things that might get added
 
-- **Caching:** keep transcriptions in a Room database (currently they vanish when you close).
-- **Foreground service** for transcribing very long files (>5 min) so Android won't kill the activity.
-- **VAD pre-trimming** with `ggml-silero-vad` for faster runs on long files.
-- **Notification with text** so you don't have to keep the app foregrounded.
-- **Translate to other Languages** not just english. 
+- Caching: keep transcriptions in a Room database. Right now they vanish when you close the app.
+- Foreground service for transcribing very long files (>5 min) so Android won't kill the activity.
+- VAD pre-trimming with `ggml-silero-vad` for faster runs on long files.
+- Notification with text so you don't have to keep the app foregrounded.
+- Translate to languages other than English.
 
 ---
 
 ## Caveats
 
-- **First run on a fresh build is slow** - whisper.cpp gets cloned and compiled
+- **First run on a fresh build is slow.** whisper.cpp gets cloned and compiled
   for arm64. Subsequent builds are incremental and quick.
 - **Vulkan on Mali drivers can crash** with extremely old quantizations. If you
   hit a crash, flip `whispershare.vulkan=false` and rebuild.
