@@ -1,14 +1,13 @@
 # WhisperShare
 
-A small Android app that transcribes voice messages on-device using whisper.cpp,
-wired into the share sheet. I built it on a Pixel 9, so that's where it's been
-tested most.
+Android app that transcribes voice messages on-device with whisper.cpp, wired
+into the share sheet. Tested mostly on a Pixel 9.
 
 - **Local only.** Audio never leaves the phone.
-- **Share to transcribe.** Long-press a voice note in WhatsApp / Telegram / Signal /
-  Voice Recorder, hit Share, pick WhisperShare, get text.
-- **GPU path** via whisper.cpp's Vulkan backend (Mali-G715 on Pixel 9). CPU is
-  fast enough on the small and base models that I don't usually bother flipping it on.
+- **Share to transcribe.** Long-press a voice note in WhatsApp / Telegram / Signal,
+  Share, pick WhisperShare.
+- **GPU path** via Vulkan (Mali-G715). CPU is fast enough on small/base that I
+  rarely flip it on.
 - **Multilingual.** German, English, etc., or auto-detect. Optional translate-to-English.
 
 <p align="center">
@@ -21,87 +20,62 @@ tested most.
 
 ## Privacy
 
-Audio never leaves your device. The only network call the app makes is the
-opt-in download of a Whisper model from `huggingface.co`, which happens the first
-time you tap the cloud icon next to a model. No analytics, no crash reporters,
-no third-party SDKs. `INTERNET` (for that model download) is the only permission
-requested.
+Audio never leaves your device. The only network call is the opt-in model
+download from `huggingface.co` when you tap the cloud icon. No analytics, no
+crash reporters, no third-party SDKs. `INTERNET` is the only permission.
 
-Full privacy policy: <https://daniilbabanin.github.io/WhisperShare/privacy/>
+Full policy: <https://daniilbabanin.github.io/WhisperShare/privacy/>
 
 ---
 
 ## Install
 
-Pick whichever you prefer:
-
-- **GitHub release.** Grab `WhisperShare.apk` from the
-  [latest release](https://github.com/DaniilBabanin/WhisperShare/releases/latest)
-  and sideload it.
+- **GitHub release.** Sideload `WhisperShare.apk` from the
+  [latest release](https://github.com/DaniilBabanin/WhisperShare/releases/latest).
 - **Obtainium.** Add `https://github.com/DaniilBabanin/WhisperShare` as a source.
-  You'll get update notifications whenever a new tag is published.
 
-arm64-v8a only (Pixel 9 / any modern Android device). Android 12 or newer.
+arm64-v8a, Android 12+.
 
 ---
 
 ## Usage
 
-1. **Launch WhisperShare** once. Tap the cloud icon next to **Base (multilingual)**
-   to download the default model (~60 MB). Pick it with the radio button.
-2. **Open WhatsApp** (or Telegram / Signal). Long-press a voice message, share to
-   WhisperShare.
-3. Wait a second or two. The text appears on screen with **Copy** / **Share** buttons.
+1. Launch once. Tap the cloud icon next to **Base (multilingual)** to download
+   the default model (~60 MB), then select it.
+2. In WhatsApp/Telegram/Signal, long-press a voice message and share to WhisperShare.
+3. Text appears with **Copy** / **Share** buttons.
 
 Settings:
 
 - **Use GPU when available.** Only does anything if you built with `whispershare.vulkan=true`.
-- **Language.** Leave empty for auto-detect, or set `de` / `en` / `fr` etc.
-- **Translate to English.** If on, German/Russian/etc. audio comes out as English text.
+- **Language.** Empty for auto-detect, or `de` / `en` / `fr` etc.
+- **Translate to English.** German/Russian/etc. audio comes out as English text.
 
 ---
 
 ## Build it
 
-You need **Android Studio Ladybug (2024.2)** or newer with the NDK side-by-side installed.
+Android Studio Ladybug (2024.2)+ with NDK side-by-side.
 
 ```bash
-# 1. Get the project
 git clone git@github.com:DaniilBabanin/WhisperShare.git
 cd WhisperShare
-
-# 2. Open in Android Studio. It will prompt you to install:
-#    - Android SDK 35
-#    - NDK 27.x
-#    - CMake 3.22.1
-#    Accept all.
-
-# 3. (Optional) Enable Vulkan GPU backend.
-#    Edit gradle.properties:
-#      whispershare.vulkan=true
-#    Rebuild. APK gains ~3 MB and uses the Mali-G715 for inference.
-
-# 4. Run on device. First launch downloads the chosen model from HuggingFace.
+# Android Studio will prompt for: SDK 35, NDK 27.x, CMake 3.22.1.
+# For Vulkan: set whispershare.vulkan=true in gradle.properties (+~3 MB APK).
 ```
 
-CLI build:
+CLI:
 
 ```bash
-./gradlew assembleRelease
-# unsigned APK ends up at:  app/build/outputs/apk/release/app-release-unsigned.apk
-```
-
-To install a debug build directly:
-
-```bash
-./gradlew installDebug
+./gradlew assembleRelease   # app/build/outputs/apk/release/app-release-unsigned.apk
+./gradlew installDebug      # debug build straight to device
 ```
 
 ---
 
 ## Models
 
-Pulled from `huggingface.co/ggerganov/whisper.cpp`:
+From `huggingface.co/ggerganov/whisper.cpp`:
 
 | Model | Size | Speed on Pixel 9 (CPU) | Quality |
 |-------|------|------------------------|---------|
@@ -110,12 +84,8 @@ Pulled from `huggingface.co/ggerganov/whisper.cpp`:
 | `small-q5_1` | 190 MB | ~3× realtime | Best for accents / noise / mixed languages |
 | `base.en-q5_1` | 60 MB | ~10× realtime | English-only, slightly faster than `base-q5_1` |
 
-For German voice notes, use `base-q5_1` or `small-q5_1`. The English-only models
-won't help you there.
-
-With Vulkan turned on, the small model runs roughly 1.5–2× faster than CPU on a
-Pixel 9. On tiny and base the gap is smaller because dispatch overhead eats most
-of the win.
+For German, use `base-q5_1` or `small-q5_1`. With Vulkan, `small` runs ~1.5–2×
+faster than CPU; on tiny/base, dispatch overhead eats the win.
 
 ---
 
@@ -137,8 +107,8 @@ of the win.
               (selectable text + Copy/Share)
 ```
 
-The native library (`libwhispershare.so`) is built by CMake during gradle sync.
-CMake's `FetchContent` pulls whisper.cpp v1.7.4 from GitHub the first time.
+`libwhispershare.so` is built by CMake during gradle sync. `FetchContent` pulls
+whisper.cpp v1.7.4 the first time.
 
 ---
 
@@ -167,22 +137,22 @@ app/
 
 ---
 
-## Things that might get added
+## Maybe later
 
-- Caching: keep transcriptions in a Room database. Right now they vanish when you close the app.
-- Foreground service for transcribing very long files (>5 min) so Android won't kill the activity.
-- VAD pre-trimming with `ggml-silero-vad` for faster runs on long files.
-- Notification with text so you don't have to keep the app foregrounded.
+- Cache transcriptions in Room (currently they vanish on close).
+- Foreground service for files >5 min.
+- VAD pre-trimming with `ggml-silero-vad`.
+- Notification with the text so the app doesn't need to stay foregrounded.
 - Translate to languages other than English.
 
 ---
 
 ## Caveats
 
-- **First run on a fresh build is slow.** whisper.cpp gets cloned and compiled
-  for arm64. Subsequent builds are incremental and quick.
-- **Vulkan on Mali drivers can crash** with extremely old quantizations. If you
-  hit a crash, flip `whispershare.vulkan=false` and rebuild.
+- **First fresh build is slow.** whisper.cpp gets cloned and compiled for arm64.
+  Incremental builds are quick.
+- **Vulkan on Mali can crash** on very old quantizations. Set
+  `whispershare.vulkan=false` and rebuild if it does.
 
 ---
 
