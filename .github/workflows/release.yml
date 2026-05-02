@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build & sign release APK
+    name: Build & sign release APK + AAB
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -45,21 +45,23 @@ jobs:
           echo -n "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/app/release.keystore"
           test -s "$GITHUB_WORKSPACE/app/release.keystore"
 
-      - name: Build release APK
+      - name: Build release APK and AAB
         env:
           WHISPERSHARE_KEYSTORE_PATH: ${{ github.workspace }}/app/release.keystore
           WHISPERSHARE_STORE_PASSWORD: ${{ secrets.WHISPERSHARE_STORE_PASSWORD }}
           WHISPERSHARE_KEY_ALIAS: ${{ secrets.WHISPERSHARE_KEY_ALIAS }}
           WHISPERSHARE_KEY_PASSWORD: ${{ secrets.WHISPERSHARE_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon assembleRelease
+        run: ./gradlew --no-daemon assembleRelease bundleRelease
 
-      - name: Stage and verify APK
+      - name: Stage and verify artifacts
         run: |
           cp app/build/outputs/apk/release/app-release.apk WhisperShare.apk
-          ls -lh WhisperShare.apk
+          cp app/build/outputs/bundle/release/app-release.aab WhisperShare.aab
+          ls -lh WhisperShare.apk WhisperShare.aab
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/35.0.0)
           "$BUILD_TOOLS/apksigner" verify --verbose WhisperShare.apk
           "$BUILD_TOOLS/aapt" dump badging WhisperShare.apk | grep -E '^(package|application-debuggable|testOnly)' || true
+          jarsigner -verify WhisperShare.aab
 
       - name: Remove keystore from runner
         if: always()
@@ -68,5 +70,7 @@ jobs:
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: WhisperShare.apk
+          files: |
+            WhisperShare.apk
+            WhisperShare.aab
           fail_on_unmatched_files: true
