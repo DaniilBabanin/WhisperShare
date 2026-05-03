@@ -2,4 +2,62 @@
 <resources>
     <string name="app_name">WhisperShare</string>
     <string name="transcribe_label">Transcribe with WhisperShare</string>
+
+    <!-- Home -->
+    <string name="home_intro">Share any voice message to WhisperShare to transcribe it locally on this device. All processing happens on your phone — no audio leaves it.</string>
+    <string name="section_models">Models</string>
+    <string name="section_performance">Performance</string>
+    <string name="section_language">Language</string>
+    <string name="share_tip">Tip: long-press a voice message in WhatsApp / Telegram / Signal and choose Share → WhisperShare.</string>
+    <string name="delete_cd">Delete</string>
+    <string name="download_cd">Download</string>
+
+    <!-- Import -->
+    <string name="import_model_button">Import .bin file</string>
+    <string name="import_model_hint">Sideload any whisper.cpp ggml file already on this device. Useful when huggingface.co is unreachable.</string>
+    <string name="import_dialog_title">Import model</string>
+    <string name="import_dialog_name">Display name</string>
+    <string name="import_dialog_name_hint">e.g. Medium quantised</string>
+    <string name="import_dialog_multilingual">Multilingual</string>
+    <string name="import_dialog_multilingual_hint">Off if this is an English-only (.en) variant.</string>
+    <string name="import_dialog_confirm">Import</string>
+    <string name="cancel">Cancel</string>
+
+    <!-- Performance -->
+    <string name="gpu_title">Use GPU when available</string>
+    <string name="gpu_subtitle">Vulkan acceleration on Pixel 9 (Mali-G715). Falls back to CPU automatically if the build doesn\'t include Vulkan.</string>
+    <string name="high_quality_title">High-quality mode</string>
+    <string name="high_quality_subtitle">Beam search instead of greedy decoding. Slower but visibly better on noisy or accented audio.</string>
+    <string name="threads_title">CPU threads · %1$s</string>
+    <string name="threads_subtitle">0 = auto (cores/2). Max %1$d on this device.</string>
+    <string name="threads_auto">auto</string>
+    <string name="threads_count">%1$d</string>
+    <string name="benchmark_button">Run benchmark</string>
+
+    <!-- Language / translate -->
+    <string name="lang_label">Language (auto if empty)</string>
+    <string name="lang_placeholder">e.g. en, de, fr</string>
+    <string name="translate_title">Translate to English</string>
+    <string name="translate_subtitle">Whisper will translate non-English audio to English instead of transcribing in source language.</string>
+
+    <!-- Developer options -->
+    <string name="dev_unlocked">Developer options unlocked</string>
+    <string name="dev_hide_button">Hide developer options</string>
+    <string name="skip_verify_title">Skip model verification</string>
+    <string name="skip_verify_subtitle">Don\'t check SHA-256 of downloaded models. Useful only when you\'re sure the upstream changed legitimately.</string>
+    <plurals name="dev_unlock_progress">
+        <item quantity="one">%d more tap to unlock developer options</item>
+        <item quantity="other">%d more taps to unlock developer options</item>
+    </plurals>
+
+    <!-- Benchmark screen -->
+    <string name="benchmark_title">Benchmark</string>
+    <string name="benchmark_intro">Pick any audio file. WhisperShare will transcribe it once with every installed model on each available backend, and compare wall-clock speed.</string>
+    <string name="benchmark_no_models">No models installed. Download or import a model first.</string>
+    <string name="benchmark_summary">%1$d installed model(s). Backends: %2$s.</string>
+    <string name="benchmark_summary_gpu">CPU and GPU</string>
+    <string name="benchmark_summary_cpu_only">CPU only (build without Vulkan)</string>
+    <string name="benchmark_pick_audio">Pick audio &amp; run</string>
+    <string name="benchmark_running">Running…</string>
+    <string name="benchmark_results_header">Results</string>
 </resources>

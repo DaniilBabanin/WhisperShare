@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="transcribe_label">Mit WhisperShare transkribieren</string>
+
+    <!-- Home -->
+    <string name="home_intro">Teile eine Sprachnachricht an WhisperShare, um sie lokal auf diesem Gerät zu transkribieren. Die gesamte Verarbeitung findet auf deinem Handy statt — keine Audiodaten verlassen das Gerät.</string>
+    <string name="section_models">Modelle</string>
+    <string name="section_performance">Leistung</string>
+    <string name="section_language">Sprache</string>
+    <string name="share_tip">Tipp: Halte eine Sprachnachricht in WhatsApp / Telegram / Signal lange gedrückt und wähle Teilen → WhisperShare.</string>
+    <string name="delete_cd">Löschen</string>
+    <string name="download_cd">Herunterladen</string>
+
+    <!-- Import -->
+    <string name="import_model_button">.bin-Datei importieren</string>
+    <string name="import_model_hint">Lade eine bereits auf diesem Gerät vorhandene whisper.cpp ggml-Datei. Nützlich, wenn huggingface.co nicht erreichbar ist.</string>
+    <string name="import_dialog_title">Modell importieren</string>
+    <string name="import_dialog_name">Anzeigename</string>
+    <string name="import_dialog_name_hint">z. B. Medium quantisiert</string>
+    <string name="import_dialog_multilingual">Mehrsprachig</string>
+    <string name="import_dialog_multilingual_hint">Aus, wenn dies eine reine englische (.en) Variante ist.</string>
+    <string name="import_dialog_confirm">Importieren</string>
+    <string name="cancel">Abbrechen</string>
+
+    <!-- Performance -->
+    <string name="gpu_title">GPU verwenden, wenn verfügbar</string>
+    <string name="gpu_subtitle">Vulkan-Beschleunigung auf Pixel 9 (Mali-G715). Fällt automatisch auf CPU zurück, wenn der Build kein Vulkan enthält.</string>
+    <string name="high_quality_title">Hochqualitätsmodus</string>
+    <string name="high_quality_subtitle">Beam-Search statt Greedy-Decoding. Langsamer, aber deutlich besser bei verrauschten oder akzentuierten Aufnahmen.</string>
+    <string name="threads_title">CPU-Threads · %1$s</string>
+    <string name="threads_subtitle">0 = automatisch (Kerne/2). Max %1$d auf diesem Gerät.</string>
+    <string name="threads_auto">automatisch</string>
+    <string name="threads_count">%1$d</string>
+    <string name="benchmark_button">Benchmark starten</string>
+
+    <!-- Language / translate -->
+    <string name="lang_label">Sprache (auto, wenn leer)</string>
+    <string name="lang_placeholder">z. B. en, de, fr</string>
+    <string name="translate_title">Ins Englische übersetzen</string>
+    <string name="translate_subtitle">Whisper übersetzt nicht-englische Aufnahmen ins Englische, statt sie in der Originalsprache zu transkribieren.</string>
+
+    <!-- Developer options -->
+    <string name="dev_unlocked">Entwickleroptionen aktiviert</string>
+    <string name="dev_hide_button">Entwickleroptionen ausblenden</string>
+    <string name="skip_verify_title">Modell-Verifizierung überspringen</string>
+    <string name="skip_verify_subtitle">SHA-256 heruntergeladener Modelle nicht prüfen. Nur sinnvoll, wenn du sicher bist, dass sich die Quelle legitim geändert hat.</string>
+    <plurals name="dev_unlock_progress">
+        <item quantity="one">Noch %d Tipp, um Entwickleroptionen freizuschalten</item>
+        <item quantity="other">Noch %d Tipps, um Entwickleroptionen freizuschalten</item>
+    </plurals>
+
+    <!-- Benchmark screen -->
+    <string name="benchmark_title">Benchmark</string>
+    <string name="benchmark_intro">Wähle eine beliebige Audiodatei. WhisperShare transkribiert sie mit jedem installierten Modell auf jedem verfügbaren Backend und vergleicht die Geschwindigkeit.</string>
+    <string name="benchmark_no_models">Keine Modelle installiert. Lade oder importiere zuerst ein Modell.</string>
+    <string name="benchmark_summary">%1$d installierte(s) Modell(e). Backends: %2$s.</string>
+    <string name="benchmark_summary_gpu">CPU und GPU</string>
+    <string name="benchmark_summary_cpu_only">Nur CPU (Build ohne Vulkan)</string>
+    <string name="benchmark_pick_audio">Audio wählen &amp; starten</string>
+    <string name="benchmark_running">Läuft…</string>
+    <string name="benchmark_results_header">Ergebnisse</string>
+</resources>

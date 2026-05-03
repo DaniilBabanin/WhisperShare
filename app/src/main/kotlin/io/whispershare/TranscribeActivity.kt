@@ -9,7 +9,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.whispershare.ui.TranscribeScreen
@@ -99,11 +98,17 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                 _state.value = TranscribeUiState.Stage(stage = "Loading model…", progress = null)
 
                 val ctx = getApplication<android.app.Application>()
-                val model = prefs.selectedModel
-                val modelFile = ModelManager.fileFor(ctx, model)
+                val entry = ModelManager.entryById(ctx, prefs.selectedModelId)
+                if (entry == null) {
+                    _state.value = TranscribeUiState.Error(
+                        "Selected model is no longer available. Open WhisperShare to pick another."
+                    )
+                    return@launch
+                }
+                val modelFile = ModelManager.fileFor(ctx, entry)
                 if (!modelFile.exists()) {
                     _state.value = TranscribeUiState.Error(
-                        "Model '${model.displayName}' is not downloaded. Open WhisperShare to download it first."
+                        "Model '${entry.displayName}' is not downloaded. Open WhisperShare to download it first."
                     )
                     return@launch
                 }
@@ -120,14 +125,34 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
 
                 _state.value = TranscribeUiState.Stage(
                     "Transcribing %.1fs of audio…".format(durationSec),
-                    null
+                    0f
                 )
 
+                val builder = StringBuilder()
                 val started = System.currentTimeMillis()
                 val text = WhisperEngine.transcribe(
                     pcm16k = pcm,
                     language = prefs.language.takeIf { it.isNotBlank() },
-                    translate = prefs.translateToEnglish
+                    translate = prefs.translateToEnglish,
+                    threads = prefs.resolvedThreads(),
+                    highQuality = prefs.highQuality,
+                    onSegment = { seg ->
+                        builder.append(seg)
+                        _state.value = TranscribeUiState.Streaming(
+                            partial = builder.toString(),
+                            durationSec = durationSec,
+                            progress = (_state.value as? TranscribeUiState.Streaming)?.progress
+                        )
+                    },
+                    onProgress = { pct ->
+                        val cur = _state.value
+                        val partial = (cur as? TranscribeUiState.Streaming)?.partial ?: ""
+                        _state.value = TranscribeUiState.Streaming(
+                            partial = partial,
+                            durationSec = durationSec,
+                            progress = pct.coerceIn(0f, 1f)
+                        )
+                    }
                 )
                 val ms = System.currentTimeMillis() - started
 

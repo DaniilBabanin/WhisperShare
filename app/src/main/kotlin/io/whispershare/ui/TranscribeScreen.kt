@@ -19,6 +19,8 @@ import androidx.compose.ui.text.font.FontWeight
 sealed interface TranscribeUiState {
     data object Idle : TranscribeUiState
     data class Stage(val stage: String, val progress: Float?) : TranscribeUiState
+    /** In-flight transcription with partial text + optional progress (0..1). */
+    data class Streaming(val partial: String, val durationSec: Double, val progress: Float?) : TranscribeUiState
     data class Done(val text: String, val durationSec: Double, val elapsedMs: Long, val backend: String) : TranscribeUiState
     data class Error(val message: String) : TranscribeUiState
 }
@@ -70,6 +72,47 @@ fun TranscribeScreen(
                     }
                     Spacer(Modifier.height(12.dp))
                     Text(state.stage, style = MaterialTheme.typography.bodyMedium)
+                }
+
+                is TranscribeUiState.Streaming -> {
+                    Spacer(Modifier.height(8.dp))
+                    if (state.progress != null) {
+                        LinearProgressIndicator(
+                            progress = { state.progress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (state.progress != null)
+                            "Transcribing ${"%.0f".format(state.progress * 100)}% of ${"%.1f".format(state.durationSec)}s"
+                        else
+                            "Transcribing ${"%.1f".format(state.durationSec)}s of audio…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+
+                    Surface(
+                        tonalElevation = 2.dp,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                state.partial.ifBlank { "…" },
+                                modifier = Modifier
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(16.dp),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                 }
 
                 is TranscribeUiState.Done -> {

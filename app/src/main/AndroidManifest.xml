@@ -65,5 +65,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".BenchmarkActivity"
+            android:exported="false"
+            android:label="@string/benchmark_title"
+            android:theme="@style/Theme.WhisperShare" />
+
     </application>
 </manifest>

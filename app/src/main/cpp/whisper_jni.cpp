@@ -8,6 +8,48 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+namespace {
+
+struct CallbackCtx {
+    JNIEnv  *env;
+    jobject  callback;        // io.whispershare.TranscribeCallback (local ref, valid for the call)
+    jmethodID seg_method;
+    jmethodID prog_method;
+};
+
+void cb_new_segment(struct whisper_context *ctx, struct whisper_state * /*state*/,
+                    int n_new, void *user_data) {
+    auto *cbctx = static_cast<CallbackCtx *>(user_data);
+    if (cbctx == nullptr || cbctx->callback == nullptr) return;
+    int n_segments = whisper_full_n_segments(ctx);
+    int start = n_segments - n_new;
+    if (start < 0) start = 0;
+    for (int i = start; i < n_segments; ++i) {
+        const char *text = whisper_full_get_segment_text(ctx, i);
+        if (text == nullptr) continue;
+        jstring jtext = cbctx->env->NewStringUTF(text);
+        cbctx->env->CallVoidMethod(cbctx->callback, cbctx->seg_method, jtext);
+        if (cbctx->env->ExceptionCheck()) {
+            cbctx->env->ExceptionDescribe();
+            cbctx->env->ExceptionClear();
+        }
+        cbctx->env->DeleteLocalRef(jtext);
+    }
+}
+
+void cb_progress(struct whisper_context * /*ctx*/, struct whisper_state * /*state*/,
+                 int progress, void *user_data) {
+    auto *cbctx = static_cast<CallbackCtx *>(user_data);
+    if (cbctx == nullptr || cbctx->callback == nullptr) return;
+    cbctx->env->CallVoidMethod(cbctx->callback, cbctx->prog_method, static_cast<jint>(progress));
+    if (cbctx->env->ExceptionCheck()) {
+        cbctx->env->ExceptionDescribe();
+        cbctx->env->ExceptionClear();
+    }
+}
+
+} // namespace
+
 extern "C" {
 
 JNIEXPORT jlong JNICALL
@@ -48,7 +90,9 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         jfloatArray pcm,
         jstring language,
         jboolean translate,
-        jint nThreads) {
+        jint nThreads,
+        jboolean useBeam,
+        jobject callback) {
 
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
     if (ctx == nullptr) {
@@ -58,7 +102,8 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     jsize n = env->GetArrayLength(pcm);
     jfloat *samples = env->GetFloatArrayElements(pcm, nullptr);
 
-    whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    whisper_full_params params = whisper_full_default_params(
+            useBeam ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
     params.print_progress  = false;
     params.print_special   = false;
     params.print_realtime  = false;
@@ -68,11 +113,30 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     params.suppress_blank  = true;
     params.no_context      = true;
     params.single_segment  = false;
+    if (useBeam) {
+        params.beam_search.beam_size = 5;
+    }
 
     const char *lang = nullptr;
     if (language != nullptr) {
         lang = env->GetStringUTFChars(language, nullptr);
         if (lang && lang[0] != '\0') params.language = lang;
+    }
+
+    CallbackCtx cbctx{env, callback, nullptr, nullptr};
+    if (callback != nullptr) {
+        jclass cls = env->GetObjectClass(callback);
+        cbctx.seg_method  = env->GetMethodID(cls, "jniSegment",  "(Ljava/lang/String;)V");
+        cbctx.prog_method = env->GetMethodID(cls, "jniProgress", "(I)V");
+        env->DeleteLocalRef(cls);
+        if (cbctx.seg_method != nullptr) {
+            params.new_segment_callback           = cb_new_segment;
+            params.new_segment_callback_user_data = &cbctx;
+        }
+        if (cbctx.prog_method != nullptr) {
+            params.progress_callback           = cb_progress;
+            params.progress_callback_user_data = &cbctx;
+        }
     }
 
     int rc = whisper_full(ctx, params, samples, n);

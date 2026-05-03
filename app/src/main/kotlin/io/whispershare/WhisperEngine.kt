@@ -53,18 +53,45 @@ object WhisperEngine {
     /**
      * @param pcm16k mono float PCM at 16 kHz, range [-1.0, 1.0]
      * @param language ISO-639-1 like "en", "de"; null = auto-detect
-     * @param translate true = translate non-English to English
+     * @param translate true = translate non-English to English (English-only output)
      * @param threads CPU threads to use (ignored on GPU path)
+     * @param highQuality switch sampling strategy from greedy → beam search (slower, more accurate)
+     * @param onSegment fires per committed segment for streaming UI updates
+     * @param onProgress fires periodically with 0..1 progress
      */
     suspend fun transcribe(
         pcm16k: FloatArray,
         language: String? = null,
         translate: Boolean = false,
-        threads: Int = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(2)
+        threads: Int = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(2),
+        highQuality: Boolean = false,
+        onSegment: ((String) -> Unit)? = null,
+        onProgress: ((Float) -> Unit)? = null
     ): String = withContext(Dispatchers.Default) {
         val ptr = ctxPtr.get()
         check(ptr != 0L) { "WhisperEngine not loaded — call load() first" }
-        nativeTranscribe(ptr, pcm16k, language ?: "", translate, threads)
+        val cb = if (onSegment != null || onProgress != null) {
+            TranscribeCallback().apply {
+                this.onSegment = onSegment
+                this.onProgress = onProgress
+            }
+        } else null
+        nativeTranscribe(ptr, pcm16k, language ?: "", translate, threads, highQuality, cb)
+    }
+
+    /**
+     * Convenience: full load → transcribe → keep loaded. Used by [Benchmark] which
+     * iterates many (model, gpu) combinations.
+     */
+    suspend fun runOnce(
+        modelFile: File,
+        useGpu: Boolean,
+        pcm16k: FloatArray,
+        language: String? = null,
+        threads: Int = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(2)
+    ): Result<String> = runCatching {
+        load(modelFile, useGpu).getOrThrow()
+        transcribe(pcm16k = pcm16k, language = language, translate = false, threads = threads)
     }
 
     // ---------- native ----------
@@ -75,7 +102,27 @@ object WhisperEngine {
         pcm: FloatArray,
         language: String,
         translate: Boolean,
-        nThreads: Int
+        nThreads: Int,
+        useBeam: Boolean,
+        callback: TranscribeCallback?
     ): String
     private external fun nativeBackendInfo(): String
+}
+
+/**
+ * JNI calls these methods directly via reflection-free MethodIDs — keep public + don't rename.
+ */
+class TranscribeCallback {
+    @JvmField var onSegment: ((String) -> Unit)? = null
+    @JvmField var onProgress: ((Float) -> Unit)? = null
+
+    @Suppress("unused")
+    fun jniSegment(text: String) {
+        onSegment?.invoke(text)
+    }
+
+    @Suppress("unused")
+    fun jniProgress(pct: Int) {
+        onProgress?.invoke(pct / 100f)
+    }
 }
