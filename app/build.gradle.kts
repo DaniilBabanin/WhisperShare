@@ -18,7 +18,7 @@ android {
         minSdk = 31           // Android 12 — covers Pixel 9 easily
         targetSdk = 35
         versionCode = 3
-        versionName = "0.1.2"
+        versionName = "0.1.3
 
         ndk {
             // Pixel 9 is arm64. Drop the others to keep APK small.
