@@ -23,7 +23,7 @@ data class BenchmarkResult(
 object Benchmark {
 
     /** True if the binary was built with Vulkan support. GPU is meaningless otherwise. */
-    fun gpuSupported(): Boolean = WhisperEngine.activeBackend == "vulkan"
+    fun gpuSupported(): Boolean = WhisperEngine.compiledBackend == "vulkan"
 
     suspend fun run(
         context: Context,

@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 
 class TranscribeActivity : ComponentActivity() {
 
@@ -113,51 +114,96 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                     return@launch
                 }
 
-                WhisperEngine.load(modelFile, useGpu = prefs.useGpu)
-                    .getOrElse {
-                        _state.value = TranscribeUiState.Error("Failed to load model: ${it.message}")
-                        return@launch
-                    }
+                var useGpu = prefs.useGpu
+                var notice: String? = null
+
+                // Pick up a one-shot notice from a previous-run GPU crash.
+                if (prefs.gpuCrashedNotice) {
+                    prefs.gpuCrashedNotice = false
+                    notice = "Last GPU run crashed on this device — switched to CPU."
+                }
+
+                val loadResult = WhisperEngine.load(modelFile, useGpu = useGpu)
+                if (loadResult.isFailure && useGpu) {
+                    // GPU init blew up (e.g. Mali driver) — fall back to CPU and remember it.
+                    prefs.useGpu = false
+                    useGpu = false
+                    notice = "GPU init failed on this device — switched to CPU."
+                    WhisperEngine.load(modelFile, useGpu = false)
+                        .getOrElse {
+                            _state.value = TranscribeUiState.Error("Failed to load model: ${it.message}")
+                            return@launch
+                        }
+                } else if (loadResult.isFailure) {
+                    _state.value = TranscribeUiState.Error(
+                        "Failed to load model: ${loadResult.exceptionOrNull()?.message}"
+                    )
+                    return@launch
+                }
 
                 _state.value = TranscribeUiState.Stage("Decoding audio…", null)
                 val pcm = AudioDecoder.decodeToPcmWithFallback(ctx, uri)
                 val durationSec = pcm.size / 16_000.0
 
-                _state.value = TranscribeUiState.Stage(
-                    "Transcribing %.1fs of audio…".format(durationSec),
-                    0f
-                )
+                suspend fun runOnce(): String {
+                    _state.value = TranscribeUiState.Stage(
+                        "Transcribing %.1fs of audio…".format(durationSec),
+                        0f
+                    )
+                    val builder = StringBuilder()
+                    return WhisperEngine.transcribe(
+                        pcm16k = pcm,
+                        language = prefs.language.takeIf { it.isNotBlank() },
+                        translate = prefs.translateToEnglish,
+                        threads = prefs.resolvedThreads(),
+                        highQuality = prefs.highQuality,
+                        onSegment = { seg ->
+                            builder.append(seg)
+                            _state.value = TranscribeUiState.Streaming(
+                                partial = builder.toString(),
+                                durationSec = durationSec,
+                                progress = (_state.value as? TranscribeUiState.Streaming)?.progress
+                            )
+                        },
+                        onProgress = { pct ->
+                            val cur = _state.value
+                            val partial = (cur as? TranscribeUiState.Streaming)?.partial ?: ""
+                            _state.value = TranscribeUiState.Streaming(
+                                partial = partial,
+                                durationSec = durationSec,
+                                progress = pct.coerceIn(0f, 1f)
+                            )
+                        }
+                    )
+                }
 
-                val builder = StringBuilder()
+                // Crash-crumb: write before any GPU run, delete after. If the
+                // process aborts mid-transcribe (ggml_abort, vk::DeviceLostError)
+                // the crumb survives and WhisperApp.onCreate flips us to CPU
+                // on next launch.
+                val crumb = File(ctx.filesDir, WhisperApp.GPU_CRUMB_FILE)
+                if (useGpu) crumb.writeText("running")
+
                 val started = System.currentTimeMillis()
-                val text = WhisperEngine.transcribe(
-                    pcm16k = pcm,
-                    language = prefs.language.takeIf { it.isNotBlank() },
-                    translate = prefs.translateToEnglish,
-                    threads = prefs.resolvedThreads(),
-                    highQuality = prefs.highQuality,
-                    onSegment = { seg ->
-                        builder.append(seg)
-                        _state.value = TranscribeUiState.Streaming(
-                            partial = builder.toString(),
-                            durationSec = durationSec,
-                            progress = (_state.value as? TranscribeUiState.Streaming)?.progress
-                        )
-                    },
-                    onProgress = { pct ->
-                        val cur = _state.value
-                        val partial = (cur as? TranscribeUiState.Streaming)?.partial ?: ""
-                        _state.value = TranscribeUiState.Streaming(
-                            partial = partial,
-                            durationSec = durationSec,
-                            progress = pct.coerceIn(0f, 1f)
-                        )
+                var text = runOnce()
+                if (useGpu) crumb.delete()
+                if (text.isBlank() && useGpu && WhisperEngine.lastError().isNotBlank()) {
+                    // Native error mid-transcribe — most likely vk::DeviceLostError. Force CPU and retry.
+                    prefs.useGpu = false
+                    useGpu = false
+                    notice = "GPU error: ${WhisperEngine.lastError()}. Switched to CPU."
+                    WhisperEngine.release()
+                    WhisperEngine.load(modelFile, useGpu = false).getOrElse {
+                        _state.value = TranscribeUiState.Error("Failed to reload on CPU: ${it.message}")
+                        return@launch
                     }
-                )
+                    text = runOnce()
+                }
                 val ms = System.currentTimeMillis() - started
 
                 _state.value = TranscribeUiState.Done(
-                    text = text.ifBlank { "(no speech detected)" },
+                    text = listOfNotNull(notice, text.ifBlank { "(no speech detected)" })
+                        .joinToString("\n\n"),
                     durationSec = durationSec,
                     elapsedMs = ms,
                     backend = WhisperEngine.activeBackend

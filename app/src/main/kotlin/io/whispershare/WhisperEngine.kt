@@ -20,8 +20,14 @@ object WhisperEngine {
     @Volatile private var loadedWithGpu: Boolean = false
 
     val isLoaded: Boolean get() = ctxPtr.get() != 0L
-    val activeBackend: String get() = nativeBackendInfo()
+    /** "vulkan" if the binary was compiled with Vulkan support, else "cpu". */
+    val compiledBackend: String get() = nativeBackendInfo()
+    /** Reflects what actually ran the last load: "gpu" only if Vulkan compiled AND load(useGpu=true). */
+    val activeBackend: String get() =
+        if (compiledBackend == "vulkan" && loadedWithGpu) "gpu" else "cpu"
     val activeModelPath: String? get() = loadedPath
+    /** Last native error message, "" if none. Populated by failed init/transcribe. */
+    fun lastError(): String = nativeLastError()
 
     suspend fun load(modelFile: File, useGpu: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         if (!modelFile.exists()) {
@@ -107,6 +113,7 @@ object WhisperEngine {
         callback: TranscribeCallback?
     ): String
     private external fun nativeBackendInfo(): String
+    private external fun nativeLastError(): String
 }
 
 /**

@@ -1,18 +1,24 @@
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <exception>
 #include <android/log.h>
 #include "whisper.h"
 
 #define LOG_TAG "WhisperJNI"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace {
 
+// Last native error stash — Kotlin polls this after any failure.
+// Most useful case: Vulkan vk::DeviceLostError (Mali drivers).
+std::string g_last_error;
+
 struct CallbackCtx {
     JNIEnv  *env;
-    jobject  callback;        // io.whispershare.TranscribeCallback (local ref, valid for the call)
+    jobject  callback;
     jmethodID seg_method;
     jmethodID prog_method;
 };
@@ -66,13 +72,23 @@ Java_io_whispershare_WhisperEngine_nativeInitContext(
     cparams.flash_attn = false;
 
     LOGI("Loading model: %s (gpu=%d)", path, cparams.use_gpu);
-    whisper_context *ctx = whisper_init_from_file_with_params(path, cparams);
+    whisper_context *ctx = nullptr;
+    try {
+        ctx = whisper_init_from_file_with_params(path, cparams);
+    } catch (const std::exception &e) {
+        g_last_error = std::string("init failed: ") + e.what();
+        LOGE("%s", g_last_error.c_str());
+    } catch (...) {
+        g_last_error = "init failed: unknown native exception";
+        LOGE("%s", g_last_error.c_str());
+    }
     env->ReleaseStringUTFChars(modelPath, path);
 
     if (ctx == nullptr) {
         LOGE("Failed to load model");
         return 0;
     }
+    g_last_error.clear();
     return reinterpret_cast<jlong>(ctx);
 }
 
@@ -80,7 +96,14 @@ JNIEXPORT void JNICALL
 Java_io_whispershare_WhisperEngine_nativeFreeContext(
         JNIEnv * /*env*/, jobject /*thiz*/, jlong ctxPtr) {
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
-    if (ctx) whisper_free(ctx);
+    if (!ctx) return;
+    try {
+        whisper_free(ctx);
+    } catch (const std::exception &e) {
+        LOGW("whisper_free threw: %s", e.what());
+    } catch (...) {
+        LOGW("whisper_free threw unknown exception");
+    }
 }
 
 JNIEXPORT jstring JNICALL
@@ -139,14 +162,32 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         }
     }
 
-    int rc = whisper_full(ctx, params, samples, n);
+    int rc = -1;
+    bool native_threw = false;
+    try {
+        rc = whisper_full(ctx, params, samples, n);
+    } catch (const std::exception &e) {
+        native_threw = true;
+        g_last_error = std::string("native exception: ") + e.what();
+        LOGE("%s", g_last_error.c_str());
+    } catch (...) {
+        native_threw = true;
+        g_last_error = "native exception: unknown";
+        LOGE("%s", g_last_error.c_str());
+    }
+
     env->ReleaseFloatArrayElements(pcm, samples, JNI_ABORT);
     if (lang) env->ReleaseStringUTFChars(language, lang);
 
-    if (rc != 0) {
-        LOGE("whisper_full failed: %d", rc);
+    if (native_threw) {
         return env->NewStringUTF("");
     }
+    if (rc != 0) {
+        LOGE("whisper_full failed: %d", rc);
+        g_last_error = "whisper_full returned " + std::to_string(rc);
+        return env->NewStringUTF("");
+    }
+    g_last_error.clear();
 
     std::string out;
     int n_segments = whisper_full_n_segments(ctx);
@@ -154,11 +195,8 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         const char *text = whisper_full_get_segment_text(ctx, i);
         if (text) out += text;
     }
-
-    // Trim leading whitespace whisper sometimes emits
     size_t start = out.find_first_not_of(" \t\n");
     if (start != std::string::npos) out = out.substr(start);
-
     return env->NewStringUTF(out.c_str());
 }
 
@@ -172,6 +210,12 @@ Java_io_whispershare_WhisperEngine_nativeBackendInfo(
     info = "cpu";
 #endif
     return env->NewStringUTF(info.c_str());
+}
+
+JNIEXPORT jstring JNICALL
+Java_io_whispershare_WhisperEngine_nativeLastError(
+        JNIEnv *env, jobject /*thiz*/) {
+    return env->NewStringUTF(g_last_error.c_str());
 }
 
 } // extern "C"

@@ -55,6 +55,17 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_SKIP_VERIFY, false)
         set(value) = prefs.edit { putBoolean(KEY_SKIP_VERIFY, value) }
 
+    /** One-shot flag: set when a previous GPU run crashed; cleared once observed. */
+    var gpuCrashedNotice: Boolean
+        get() = prefs.getBoolean(KEY_GPU_CRASHED, false)
+        set(value) = prefs.edit { putBoolean(KEY_GPU_CRASHED, value) }
+
+    /** Called on app start when the GPU crumb is found. Force CPU and arm the notice. */
+    fun onGpuCrashed() {
+        // Use commit() so it's durable before the user retries anything.
+        prefs.edit().putBoolean(KEY_GPU, false).putBoolean(KEY_GPU_CRASHED, true).commit()
+    }
+
     fun resolvedThreads(): Int =
         if (threads > 0) threads
         else (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(2)
@@ -68,11 +79,12 @@ class AppPreferences(context: Context) {
         private const val KEY_HIGH_QUALITY = "high_quality"
         private const val KEY_DEV_MODE = "developer_mode"
         private const val KEY_SKIP_VERIFY = "skip_model_verification"
+        private const val KEY_GPU_CRASHED = "gpu_crashed_notice"
 
         private const val DEFAULT_MODEL_ID = "builtin:BASE_Q5"
 
-        // Default to true. If the build doesn't include Vulkan, the JNI side
-        // ignores the flag and runs on CPU regardless — see whisper_jni.cpp.
-        private const val DEFAULT_USE_GPU = true
+        // Off by default — Vulkan support varies by GPU (Mali on Pixel 9 has been
+        // known to abort mid-inference). Power users can enable it from settings.
+        private const val DEFAULT_USE_GPU = false
     }
 }
