@@ -18,11 +18,13 @@ app/.cxx/
 # Logs
 *.log
 
-# Signing — never commit keystores or their decoded base64
+# Signing — the public release keystore IS committed on purpose so CI and
+# local builds sign identically with no secrets (password is "whispershare").
+# Everything else keystore-shaped stays out.
 *.keystore
 *.jks
-release.keystore
 keystore.b64
+!app/release.keystore
 
 # OS
 .DS_Store

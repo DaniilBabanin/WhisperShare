@@ -38,34 +38,48 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
-      - name: Decode keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: |
-          echo -n "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/app/release.keystore"
-          test -s "$GITHUB_WORKSPACE/app/release.keystore"
-
+      # Signed with the keystore committed at app/release.keystore (password
+      # "whispershare"), wired up as the release signingConfig in
+      # app/build.gradle.kts — so no secrets are needed and anyone can
+      # reproduce an identically-signed build.
       - name: Build release APK and AAB
-        env:
-          WHISPERSHARE_KEYSTORE_PATH: ${{ github.workspace }}/app/release.keystore
-          WHISPERSHARE_STORE_PASSWORD: ${{ secrets.WHISPERSHARE_STORE_PASSWORD }}
-          WHISPERSHARE_KEY_ALIAS: ${{ secrets.WHISPERSHARE_KEY_ALIAS }}
-          WHISPERSHARE_KEY_PASSWORD: ${{ secrets.WHISPERSHARE_KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleRelease bundleRelease
 
-      - name: Stage and verify artifacts
+      - name: Stage artifacts
         run: |
           cp app/build/outputs/apk/release/app-release.apk WhisperShare.apk
           cp app/build/outputs/bundle/release/app-release.aab WhisperShare.aab
           ls -lh WhisperShare.apk WhisperShare.aab
-          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/35.0.0)
-          "$BUILD_TOOLS/apksigner" verify --verbose WhisperShare.apk
-          "$BUILD_TOOLS/aapt" dump badging WhisperShare.apk | grep -E '^(package|application-debuggable|testOnly)' || true
-          jarsigner -verify WhisperShare.aab
 
-      - name: Remove keystore from runner
-        if: always()
-        run: rm -f "$GITHUB_WORKSPACE/app/release.keystore"
+      # Assert the signed APK's certificate fingerprint matches the value pinned
+      # in tools/release/expected-signing-cert.sha256. Any keystore swap
+      # (accidental or otherwise) fails the release here — and this is the same
+      # SHA-256 Obtainium pins for signature verification.
+      - name: Verify APK signing-cert fingerprint
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/35.0.0)
+          EXPECTED="$(tr -d '[:space:]' < tools/release/expected-signing-cert.sha256)"
+          if [ -z "$EXPECTED" ]; then
+            echo "::error::tools/release/expected-signing-cert.sha256 is empty"
+            exit 1
+          fi
+          ACTUAL="$("$BUILD_TOOLS/apksigner" verify --print-certs WhisperShare.apk \
+            | awk -F': ' '/certificate SHA-256 digest/ {print tolower($2); exit}' | tr -d ' ')"
+          echo "expected: $EXPECTED"
+          echo "actual:   $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "::error::could not extract signer cert SHA-256 from WhisperShare.apk"
+            "$BUILD_TOOLS/apksigner" verify --print-certs WhisperShare.apk || true
+            exit 1
+          fi
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::APK signing-cert SHA-256 mismatch — refusing to publish"
+            exit 1
+          fi
+          "$BUILD_TOOLS/apksigner" verify --verbose WhisperShare.apk
+          jarsigner -verify WhisperShare.aab
+          echo "signing-cert fingerprint OK"
 
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v2
@@ -74,3 +88,16 @@ jobs:
             WhisperShare.apk
             WhisperShare.aab
           fail_on_unmatched_files: true
+          generate_release_notes: true
+          append_body: true
+          body: |
+            ### Signing certificate
+
+            Pin this SHA-256 in Obtainium ("Verify app signature on update") to
+            guarantee every update is signed by the same key:
+
+            ```
+            1601abb6092cc3cc58ee2237995eabc60c59688d107caabb36a4a7e6bf8b1251
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

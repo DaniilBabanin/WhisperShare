@@ -17,8 +17,8 @@ android {
         applicationId = "io.whispershare"
         minSdk = 31           // Android 12 — covers Pixel 9 easily
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.3
+        versionCode = 4
+        versionName = "0.1.4"
 
         ndk {
             // Pixel 9 is arm64. Drop the others to keep APK small.
@@ -39,16 +39,20 @@ android {
 
     signingConfigs {
         create("release") {
+            // Signed with the keystore committed at app/release.keystore so both
+            // local `./gradlew assembleRelease` and CI produce identically-signed
+            // builds with no secrets — keeps Obtainium/sideload updates working.
+            // Env vars / -P props override the defaults if you ever rotate keys.
             val keystorePath = System.getenv("WHISPERSHARE_KEYSTORE_PATH")
                 ?: project.findProperty("WHISPERSHARE_KEYSTORE_PATH") as String?
                 ?: "release.keystore"
             storeFile = file(keystorePath)
             storePassword = System.getenv("WHISPERSHARE_STORE_PASSWORD")
-                ?: project.findProperty("WHISPERSHARE_STORE_PASSWORD") as String? ?: ""
+                ?: project.findProperty("WHISPERSHARE_STORE_PASSWORD") as String? ?: "whispershare"
             keyAlias = System.getenv("WHISPERSHARE_KEY_ALIAS")
-                ?: project.findProperty("WHISPERSHARE_KEY_ALIAS") as String? ?: ""
+                ?: project.findProperty("WHISPERSHARE_KEY_ALIAS") as String? ?: "whispershare"
             keyPassword = System.getenv("WHISPERSHARE_KEY_PASSWORD")
-                ?: project.findProperty("WHISPERSHARE_KEY_PASSWORD") as String? ?: ""
+                ?: project.findProperty("WHISPERSHARE_KEY_PASSWORD") as String? ?: "whispershare"
         }
     }
 
