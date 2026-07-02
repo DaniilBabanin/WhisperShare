@@ -2,6 +2,9 @@
 #include <string>
 #include <vector>
 #include <exception>
+#include <atomic>
+#include <mutex>
+#include <stdlib.h>
 #include <android/log.h>
 #include "whisper.h"
 
@@ -14,7 +17,26 @@ namespace {
 
 // Last native error stash — Kotlin polls this after any failure.
 // Most useful case: Vulkan vk::DeviceLostError (Mali drivers).
+// Written by nativeInitContext/nativeTranscribe, read by nativeLastError
+// from other threads — guard all access with a mutex.
+std::mutex g_last_error_mutex;
 std::string g_last_error;
+
+void set_last_error(const std::string &msg) {
+    std::lock_guard<std::mutex> lock(g_last_error_mutex);
+    g_last_error = msg;
+}
+
+std::string get_last_error() {
+    std::lock_guard<std::mutex> lock(g_last_error_mutex);
+    return g_last_error;
+}
+
+// Abort flag for nativeTranscribe. Engine is a singleton with one context,
+// so one process-global flag suffices. Set by nativeRequestAbort (any
+// thread), polled by whisper_full via params.abort_callback, reset at the
+// start of each nativeTranscribe.
+std::atomic<bool> g_abort_requested{false};
 
 struct CallbackCtx {
     JNIEnv  *env;
@@ -62,10 +84,26 @@ JNIEXPORT jlong JNICALL
 Java_io_whispershare_WhisperEngine_nativeInitContext(
         JNIEnv *env, jobject /*thiz*/, jstring modelPath, jboolean useGpu) {
     const char *path = env->GetStringUTFChars(modelPath, nullptr);
+    if (path == nullptr) {
+        // OOM: GetStringUTFChars returned null and may have thrown.
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        set_last_error("init failed: GetStringUTFChars returned null (out of memory)");
+        LOGE("GetStringUTFChars returned null");
+        return 0;
+    }
 
     whisper_context_params cparams = whisper_context_default_params();
 #ifdef WHISPERSHARE_VULKAN
     cparams.use_gpu = useGpu;
+    if (useGpu) {
+        // Mali-G715 / Pixel 9 hits ggml_abort at ggml-vulkan.cpp:6452
+        // (descriptor_set_idx exceeds descriptor_sets.size()) when the fused
+        // add/multi_add code paths are active. Disable them so pre-flight and
+        // runtime descriptor-set counts agree. Pass-through if user explicitly
+        // sets these env vars themselves (overwrite=0).
+        setenv("GGML_VK_DISABLE_FUSION",     "1", 0);
+        setenv("GGML_VK_DISABLE_MULTI_ADD",  "1", 0);
+    }
 #else
     cparams.use_gpu = false;
 #endif
@@ -76,11 +114,12 @@ Java_io_whispershare_WhisperEngine_nativeInitContext(
     try {
         ctx = whisper_init_from_file_with_params(path, cparams);
     } catch (const std::exception &e) {
-        g_last_error = std::string("init failed: ") + e.what();
-        LOGE("%s", g_last_error.c_str());
+        std::string err = std::string("init failed: ") + e.what();
+        set_last_error(err);
+        LOGE("%s", err.c_str());
     } catch (...) {
-        g_last_error = "init failed: unknown native exception";
-        LOGE("%s", g_last_error.c_str());
+        set_last_error("init failed: unknown native exception");
+        LOGE("init failed: unknown native exception");
     }
     env->ReleaseStringUTFChars(modelPath, path);
 
@@ -88,7 +127,7 @@ Java_io_whispershare_WhisperEngine_nativeInitContext(
         LOGE("Failed to load model");
         return 0;
     }
-    g_last_error.clear();
+    set_last_error("");
     return reinterpret_cast<jlong>(ctx);
 }
 
@@ -117,6 +156,9 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         jboolean useBeam,
         jobject callback) {
 
+    // New transcription run: clear any stale abort request.
+    g_abort_requested.store(false, std::memory_order_relaxed);
+
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
     if (ctx == nullptr) {
         return env->NewStringUTF("");
@@ -124,6 +166,13 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
 
     jsize n = env->GetArrayLength(pcm);
     jfloat *samples = env->GetFloatArrayElements(pcm, nullptr);
+    if (samples == nullptr) {
+        // OOM: GetFloatArrayElements returned null and may have thrown.
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        set_last_error("GetFloatArrayElements returned null (out of memory)");
+        LOGE("GetFloatArrayElements returned null");
+        return env->NewStringUTF("");
+    }
 
     whisper_full_params params = whisper_full_default_params(
             useBeam ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
@@ -140,9 +189,16 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         params.beam_search.beam_size = 5;
     }
 
+    // Poll the abort flag so Kotlin can cancel a running transcription.
+    params.abort_callback = [](void * /*user_data*/) -> bool {
+        return g_abort_requested.load(std::memory_order_relaxed);
+    };
+    params.abort_callback_user_data = nullptr;
+
     const char *lang = nullptr;
     if (language != nullptr) {
         lang = env->GetStringUTFChars(language, nullptr);
+        if (lang == nullptr && env->ExceptionCheck()) env->ExceptionClear();
         if (lang && lang[0] != '\0') params.language = lang;
     }
 
@@ -150,7 +206,11 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     if (callback != nullptr) {
         jclass cls = env->GetObjectClass(callback);
         cbctx.seg_method  = env->GetMethodID(cls, "jniSegment",  "(Ljava/lang/String;)V");
+        // A failed lookup leaves NoSuchMethodError pending; clear it before
+        // making further JNI calls (running with a pending exception is UB).
+        if (cbctx.seg_method == nullptr && env->ExceptionCheck()) env->ExceptionClear();
         cbctx.prog_method = env->GetMethodID(cls, "jniProgress", "(I)V");
+        if (cbctx.prog_method == nullptr && env->ExceptionCheck()) env->ExceptionClear();
         env->DeleteLocalRef(cls);
         if (cbctx.seg_method != nullptr) {
             params.new_segment_callback           = cb_new_segment;
@@ -168,12 +228,13 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         rc = whisper_full(ctx, params, samples, n);
     } catch (const std::exception &e) {
         native_threw = true;
-        g_last_error = std::string("native exception: ") + e.what();
-        LOGE("%s", g_last_error.c_str());
+        std::string err = std::string("native exception: ") + e.what();
+        set_last_error(err);
+        LOGE("%s", err.c_str());
     } catch (...) {
         native_threw = true;
-        g_last_error = "native exception: unknown";
-        LOGE("%s", g_last_error.c_str());
+        set_last_error("native exception: unknown");
+        LOGE("native exception: unknown");
     }
 
     env->ReleaseFloatArrayElements(pcm, samples, JNI_ABORT);
@@ -184,10 +245,10 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     }
     if (rc != 0) {
         LOGE("whisper_full failed: %d", rc);
-        g_last_error = "whisper_full returned " + std::to_string(rc);
+        set_last_error("whisper_full returned " + std::to_string(rc));
         return env->NewStringUTF("");
     }
-    g_last_error.clear();
+    set_last_error("");
 
     std::string out;
     int n_segments = whisper_full_n_segments(ctx);
@@ -215,7 +276,16 @@ Java_io_whispershare_WhisperEngine_nativeBackendInfo(
 JNIEXPORT jstring JNICALL
 Java_io_whispershare_WhisperEngine_nativeLastError(
         JNIEnv *env, jobject /*thiz*/) {
-    return env->NewStringUTF(g_last_error.c_str());
+    std::string err = get_last_error();
+    return env->NewStringUTF(err.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_io_whispershare_WhisperEngine_nativeRequestAbort(
+        JNIEnv * /*env*/, jobject /*thiz*/, jlong /*ctxPtr*/) {
+    // Engine holds one context; a single process-global flag is enough.
+    // Picked up by the abort_callback wired in nativeTranscribe.
+    g_abort_requested.store(true, std::memory_order_relaxed);
 }
 
 } // extern "C"
