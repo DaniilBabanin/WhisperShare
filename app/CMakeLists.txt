@@ -5,8 +5,8 @@ option(WHISPERSHARE_VULKAN "Enable Vulkan GPU backend in whisper.cpp" OFF)
 
 include(FetchContent)
 
-# Pin to a known-good whisper.cpp tag. Bump as needed.
-# v1.7.6+ fixes vulkan-shaders-gen cross-compile so Vulkan builds on Android.
+# Pin to a known-good whisper.cpp tag (currently v1.8.4). Bump as needed.
+# Vulkan on Android needs >= v1.7.6 (vulkan-shaders-gen cross-compile fix).
 FetchContent_Declare(
     whisper
     GIT_REPOSITORY https://github.com/ggerganov/whisper.cpp.git
@@ -45,16 +45,18 @@ if(WHISPERSHARE_VULKAN)
     # whisper.cpp >= 1.7.5 uses vulkan.hpp (Vulkan-Hpp) which the NDK doesn't ship.
     # Pull the headers via FetchContent and put them ahead of the NDK sysroot so
     # the C headers (Vulkan-Headers submodule) match the C++ wrapper version.
+    # Header-only usage: SOURCE_SUBDIR points at a directory with no
+    # CMakeLists.txt so FetchContent_MakeAvailable() downloads the sources
+    # without calling add_subdirectory(). (Single-argument
+    # FetchContent_Populate() is deprecated by CMake 3.30 / CMP0169.)
     FetchContent_Declare(
         vulkan_hpp
         GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Hpp.git
         GIT_TAG        v1.3.290
         GIT_SHALLOW    TRUE
+        SOURCE_SUBDIR  cmake-subdir-not-used
     )
-    FetchContent_GetProperties(vulkan_hpp)
-    if(NOT vulkan_hpp_POPULATED)
-        FetchContent_Populate(vulkan_hpp)
-    endif()
+    FetchContent_MakeAvailable(vulkan_hpp)
     include_directories(BEFORE SYSTEM
         "${vulkan_hpp_SOURCE_DIR}/Vulkan-Headers/include"
         "${vulkan_hpp_SOURCE_DIR}"
