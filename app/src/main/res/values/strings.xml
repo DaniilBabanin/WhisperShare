@@ -60,4 +60,7 @@
     <string name="benchmark_pick_audio">Pick audio &amp; run</string>
     <string name="benchmark_running">Running…</string>
     <string name="benchmark_results_header">Results</string>
+
+    <!-- Transcribe screen -->
+    <string name="cancel_transcription">Cancel transcription</string>
 </resources>

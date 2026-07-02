@@ -14,10 +14,17 @@ import androidx.lifecycle.viewModelScope
 import io.whispershare.ui.TranscribeScreen
 import io.whispershare.ui.TranscribeUiState
 import io.whispershare.ui.theme.WhisperShareTheme
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class TranscribeActivity : ComponentActivity() {
@@ -38,6 +45,7 @@ class TranscribeActivity : ComponentActivity() {
                         onClose = { finish() },
                         onCopy = { _ -> },
                         onShare = { _ -> },
+                        onCancel = null,
                         onRetry = null
                     )
                 }
@@ -55,6 +63,7 @@ class TranscribeActivity : ComponentActivity() {
                     onClose = { finish() },
                     onCopy = { text -> ShareUtils.copy(this, text) },
                     onShare = { text -> ShareUtils.share(this, text) },
+                    onCancel = { vm.cancel() },
                     onRetry = { vm.start(uri) }
                 )
             }
@@ -93,13 +102,29 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
     private val _state = MutableStateFlow<TranscribeUiState>(TranscribeUiState.Idle)
     val state: StateFlow<TranscribeUiState> = _state.asStateFlow()
 
+    private var job: Job? = null
+
+    fun cancel() {
+        job?.cancel()
+        job = null
+        _state.value = TranscribeUiState.Error("Transcription cancelled.")
+    }
+
     fun start(uri: Uri) {
-        viewModelScope.launch {
+        job?.cancel()
+        job = viewModelScope.launch {
+            // Native callbacks keep firing until the abort flag is polled;
+            // guard them with this so a stale segment can't overwrite the
+            // "cancelled" state written by cancel().
+            val self = coroutineContext.job
+            var crumb: File? = null
             try {
                 _state.value = TranscribeUiState.Stage(stage = "Loading model…", progress = null)
 
                 val ctx = getApplication<android.app.Application>()
-                val entry = ModelManager.entryById(ctx, prefs.selectedModelId)
+                val entry = withContext(Dispatchers.IO) {
+                    ModelManager.entryById(ctx, prefs.selectedModelId)
+                }
                 if (entry == null) {
                     _state.value = TranscribeUiState.Error(
                         "Selected model is no longer available. Open WhisperShare to pick another."
@@ -107,7 +132,7 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                     return@launch
                 }
                 val modelFile = ModelManager.fileFor(ctx, entry)
-                if (!modelFile.exists()) {
+                if (!withContext(Dispatchers.IO) { modelFile.exists() }) {
                     _state.value = TranscribeUiState.Error(
                         "Model '${entry.displayName}' is not downloaded. Open WhisperShare to download it first."
                     )
@@ -159,39 +184,56 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                         highQuality = prefs.highQuality,
                         onSegment = { seg ->
                             builder.append(seg)
-                            _state.value = TranscribeUiState.Streaming(
-                                partial = builder.toString(),
-                                durationSec = durationSec,
-                                progress = (_state.value as? TranscribeUiState.Streaming)?.progress
-                            )
+                            val partial = builder.toString()
+                            if (self.isActive) {
+                                _state.update { cur ->
+                                    TranscribeUiState.Streaming(
+                                        partial = partial,
+                                        durationSec = durationSec,
+                                        progress = (cur as? TranscribeUiState.Streaming)?.progress
+                                    )
+                                }
+                            }
                         },
                         onProgress = { pct ->
-                            val cur = _state.value
-                            val partial = (cur as? TranscribeUiState.Streaming)?.partial ?: ""
-                            _state.value = TranscribeUiState.Streaming(
-                                partial = partial,
-                                durationSec = durationSec,
-                                progress = pct.coerceIn(0f, 1f)
-                            )
+                            if (self.isActive) {
+                                _state.update { cur ->
+                                    TranscribeUiState.Streaming(
+                                        partial = (cur as? TranscribeUiState.Streaming)?.partial ?: "",
+                                        durationSec = durationSec,
+                                        progress = pct.coerceIn(0f, 1f)
+                                    )
+                                }
+                            }
                         }
                     )
                 }
 
-                // Crash-crumb: write before any GPU run, delete after. If the
-                // process aborts mid-transcribe (ggml_abort, vk::DeviceLostError)
-                // the crumb survives and WhisperApp.onCreate flips us to CPU
-                // on next launch.
-                val crumb = File(ctx.filesDir, WhisperApp.GPU_CRUMB_FILE)
-                if (useGpu) crumb.writeText("running")
+                // Crash-crumb: write before any GPU run. Its only job is to
+                // detect hard native aborts (ggml_abort, vk::DeviceLostError)
+                // that kill the process before Kotlin can react — then the crumb
+                // survives and WhisperApp.onCreate flips us to CPU on next
+                // launch. Every path that stays in Kotlin (success, exception,
+                // cancellation) must delete it — see the finally below.
+                if (useGpu) {
+                    val c = File(ctx.filesDir, WhisperApp.GPU_CRUMB_FILE)
+                    withContext(Dispatchers.IO) { c.writeText("running") }
+                    crumb = c
+                }
 
+                // Snapshot the native error so a stale message from a previous
+                // failed load/run can't trigger a false GPU-crash retry below.
+                val errorBefore = WhisperEngine.lastError()
                 val started = System.currentTimeMillis()
                 var text = runOnce()
-                if (useGpu) crumb.delete()
-                if (text.isBlank() && useGpu && WhisperEngine.lastError().isNotBlank()) {
+                crumb?.let { c -> withContext(Dispatchers.IO) { c.delete() } }
+                crumb = null
+                val errorNow = WhisperEngine.lastError()
+                if (text.isBlank() && useGpu && errorNow.isNotBlank() && errorNow != errorBefore) {
                     // Native error mid-transcribe — most likely vk::DeviceLostError. Force CPU and retry.
                     prefs.useGpu = false
                     useGpu = false
-                    notice = "GPU error: ${WhisperEngine.lastError()}. Switched to CPU."
+                    notice = "GPU error: $errorNow. Switched to CPU."
                     WhisperEngine.release()
                     WhisperEngine.load(modelFile, useGpu = false).getOrElse {
                         _state.value = TranscribeUiState.Error("Failed to reload on CPU: ${it.message}")
@@ -208,8 +250,18 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                     elapsedMs = ms,
                     backend = WhisperEngine.activeBackend
                 )
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (t: Throwable) {
                 _state.value = TranscribeUiState.Error(t.message ?: t.javaClass.simpleName)
+            } finally {
+                // The crumb must only survive a hard native crash. Any path
+                // that reaches this finally means Kotlin is still alive, so
+                // delete it — otherwise the next launch misreports "GPU crash"
+                // and forces CPU.
+                crumb?.let { c ->
+                    withContext(NonCancellable + Dispatchers.IO) { c.delete() }
+                }
             }
         }
     }

@@ -13,8 +13,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
+import io.whispershare.R
 
 sealed interface TranscribeUiState {
     data object Idle : TranscribeUiState
@@ -32,6 +34,7 @@ fun TranscribeScreen(
     onClose: () -> Unit,
     onCopy: (String) -> Unit,
     onShare: (String) -> Unit,
+    onCancel: (() -> Unit)?,
     onRetry: (() -> Unit)?
 ) {
     Scaffold(
@@ -72,6 +75,12 @@ fun TranscribeScreen(
                     }
                     Spacer(Modifier.height(12.dp))
                     Text(state.stage, style = MaterialTheme.typography.bodyMedium)
+                    if (onCancel != null) {
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedButton(onClick = onCancel) {
+                            Text(stringResource(R.string.cancel_transcription))
+                        }
+                    }
                 }
 
                 is TranscribeUiState.Streaming -> {
@@ -113,6 +122,15 @@ fun TranscribeScreen(
                         }
                     }
                     Spacer(Modifier.height(8.dp))
+                    if (onCancel != null) {
+                        OutlinedButton(
+                            onClick = onCancel,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.cancel_transcription))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
                 }
 
                 is TranscribeUiState.Done -> {
