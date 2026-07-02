@@ -14,6 +14,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -35,6 +36,9 @@ object ModelManager {
     private const val HF_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
     private const val MANIFEST_FILE = "custom_models.json"
     private const val CUSTOM_PREFIX = "custom_"
+
+    /** RFC 9110 §15.5.17 — java.net.HttpURLConnection has no constant for it. */
+    private const val HTTP_RANGE_NOT_SATISFIABLE = 416
 
     /**
      * GGML_FILE_MAGIC from whisper.cpp v1.8.4 (ggml/include/ggml.h): 0x67676d6c, "ggml".
@@ -143,60 +147,103 @@ object ModelManager {
     // ---------- download (built-ins only) ----------
 
     /**
-     * Emits [DownloadProgress] until the flow completes. Percent when the server
-     * reports a Content-Length, downloaded megabytes otherwise (chunked responses).
+     * Emits [DownloadProgress] until the flow completes. Percent when the total
+     * size is known, downloaded megabytes otherwise (chunked responses).
      * SHA-256 verified on success unless [verify] is false (developer escape hatch).
-     * Cancelling the collector aborts the transfer and removes the .part file.
+     *
+     * Resume: a leftover .part from a previously *failed* transfer is continued
+     * with an HTTP `Range: bytes=N-` request (206 appends, 200 restarts from
+     * scratch, 416 either means "already complete" or forces a clean restart).
+     * Cancelling the collector aborts the transfer and removes the .part file;
+     * a transfer that fails on its own keeps it so the next attempt can resume.
      */
     fun download(context: Context, model: BuiltInModel, verify: Boolean = true): Flow<DownloadProgress> = flow {
         val target = fileFor(context, model)
         val tmp = File(target.absolutePath + ".part")
         val url = URL(model.downloadUrl())
-        Log.i(TAG, "Downloading $url -> $target")
 
-        val conn = (url.openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15_000
-            readTimeout = 60_000
-            instanceFollowRedirects = true
-            requestMethod = "GET"
-        }
-
+        var conn: HttpURLConnection? = null
         try {
-            conn.connect()
-            val total = conn.contentLengthLong.takeIf { it > 0 } ?: -1L
-            var downloaded = 0L
-            var lastEmitted = -1
+            var startOffset = tmp.length() // 0 when the .part doesn't exist
+            Log.i(TAG, "Downloading $url -> $target (resume offset $startOffset)")
+            var c = openConnection(url, startOffset)
+            conn = c
+            c.connect()
 
-            conn.inputStream.use { input ->
-                FileOutputStream(tmp).use { output ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n <= 0) break
-                        output.write(buf, 0, n)
-                        downloaded += n
-                        if (total > 0) {
-                            val pct = ((downloaded * 100) / total).toInt().coerceIn(0, 99)
-                            if (pct != lastEmitted) {
-                                lastEmitted = pct
-                                emit(DownloadProgress.Percent(pct))
-                            }
-                        } else {
-                            val mb = (downloaded / 1_000_000).toInt()
-                            if (mb != lastEmitted) {
-                                lastEmitted = mb
-                                emit(DownloadProgress.DownloadedMb(mb))
+            var skipTransfer = false
+            var total: Long
+            if (startOffset > 0) {
+                val action = resumeActionFor(
+                    responseCode = c.responseCode,
+                    resumeOffset = startOffset,
+                    contentRangeHeader = c.getHeaderField("Content-Range"),
+                    contentLength = c.contentLengthLong
+                )
+                when (action) {
+                    is ResumeAction.Append -> {
+                        Log.i(TAG, "Resuming ${model.filename} at $startOffset bytes")
+                        total = action.total
+                    }
+                    ResumeAction.FullBody -> {
+                        // Server ignored the Range header: stream the full body from scratch.
+                        startOffset = 0
+                        total = c.contentLengthLong.takeIf { it > 0 } ?: -1L
+                    }
+                    ResumeAction.DiscardAndRestart -> {
+                        c.disconnect()
+                        tmp.delete()
+                        startOffset = 0
+                        c = openConnection(url, 0)
+                        conn = c
+                        c.connect()
+                        total = c.contentLengthLong.takeIf { it > 0 } ?: -1L
+                    }
+                    ResumeAction.AlreadyComplete -> {
+                        // .part already holds every byte; fall through to verification.
+                        skipTransfer = true
+                        total = startOffset
+                    }
+                }
+            } else {
+                total = c.contentLengthLong.takeIf { it > 0 } ?: -1L
+            }
+
+            if (!skipTransfer) {
+                var downloaded = startOffset
+                var lastEmitted = -1
+
+                c.inputStream.use { input ->
+                    FileOutputStream(tmp, /* append = */ startOffset > 0).use { output ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            output.write(buf, 0, n)
+                            downloaded += n
+                            if (total > 0) {
+                                val pct = ((downloaded * 100) / total).toInt().coerceIn(0, 99)
+                                if (pct != lastEmitted) {
+                                    lastEmitted = pct
+                                    emit(DownloadProgress.Percent(pct))
+                                }
+                            } else {
+                                val mb = (downloaded / 1_000_000).toInt()
+                                if (mb != lastEmitted) {
+                                    lastEmitted = mb
+                                    emit(DownloadProgress.DownloadedMb(mb))
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Verify before promoting .part -> final.
+            // Verify before promoting .part -> final. Hashes the complete file,
+            // so a corrupt resume (appended onto a stale .part) is caught here.
             if (verify) {
                 val actual = sha256(tmp)
                 if (!actual.equals(model.sha256, ignoreCase = true)) {
-                    tmp.delete()
+                    tmp.delete() // never offer a corrupt file for another resume
                     throw IllegalStateException(
                         "Checksum mismatch for ${model.filename}: expected ${model.sha256.take(12)}…, got ${actual.take(12)}…"
                     )
@@ -210,12 +257,94 @@ object ModelManager {
                 tmp.delete()
             }
             emit(DownloadProgress.Percent(100))
+        } catch (e: CancellationException) {
+            // Explicit cancel: the user discarded the download, so discard the .part.
+            tmp.delete()
+            throw e
         } finally {
-            conn.disconnect()
-            // Runs on failure *and* cancellation: never leave a stale .part behind.
-            if (tmp.exists()) tmp.delete()
+            conn?.disconnect()
+            // Any other failure (network drop, server error) keeps the .part so the
+            // next attempt can resume with an HTTP Range request.
         }
     }.flowOn(Dispatchers.IO)
+
+    private fun openConnection(url: URL, rangeOffset: Long): HttpURLConnection =
+        (url.openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 60_000
+            instanceFollowRedirects = true
+            requestMethod = "GET"
+            if (rangeOffset > 0) setRequestProperty("Range", "bytes=$rangeOffset-")
+        }
+
+    /** How to treat the server's response to a `Range: bytes=N-` resume request. */
+    @VisibleForTesting
+    internal sealed interface ResumeAction {
+        /** 206 starting exactly at N: append to the .part. [total] is the full size, -1 if unknown. */
+        data class Append(val total: Long) : ResumeAction
+
+        /** 200: server ignored the Range header; truncate the .part and write the full body. */
+        data object FullBody : ResumeAction
+
+        /** Range response unusable: delete the .part and re-request without Range. */
+        data object DiscardAndRestart : ResumeAction
+
+        /** 416 and the .part already holds the complete file: skip straight to verification. */
+        data object AlreadyComplete : ResumeAction
+    }
+
+    /**
+     * Pure decision for resuming at [resumeOffset] (> 0) given the server's response.
+     * Throws [IOException] for status codes a ranged GET should never produce.
+     */
+    @VisibleForTesting
+    internal fun resumeActionFor(
+        responseCode: Int,
+        resumeOffset: Long,
+        contentRangeHeader: String?,
+        contentLength: Long
+    ): ResumeAction = when (responseCode) {
+        HttpURLConnection.HTTP_PARTIAL -> {
+            val range = parseContentRange(contentRangeHeader)
+            if (range?.first != resumeOffset) {
+                // Missing/garbled Content-Range or an offset we didn't ask for.
+                ResumeAction.DiscardAndRestart
+            } else {
+                val total = range.total
+                    ?: contentLength.takeIf { it > 0 }?.let { resumeOffset + it }
+                    ?: -1L
+                ResumeAction.Append(total)
+            }
+        }
+        HttpURLConnection.HTTP_OK -> ResumeAction.FullBody
+        HTTP_RANGE_NOT_SATISFIABLE -> {
+            // The 416 SHOULD carry "Content-Range: bytes */<total>"; if the .part is
+            // already exactly <total> bytes, everything arrived before the failure.
+            val total = parseContentRange(contentRangeHeader)?.total
+            if (total != null && total == resumeOffset) ResumeAction.AlreadyComplete
+            else ResumeAction.DiscardAndRestart
+        }
+        else -> throw IOException("Unexpected HTTP $responseCode for ranged download request")
+    }
+
+    /** Parsed `Content-Range` header. [total] is null when the server sends `*`. */
+    @VisibleForTesting
+    internal data class ContentRange(val first: Long?, val last: Long?, val total: Long?)
+
+    private val CONTENT_RANGE_REGEX =
+        Regex("""bytes\s+(?:(\d+)-(\d+)|\*)/(\d+|\*)""", RegexOption.IGNORE_CASE)
+
+    /** Parses `bytes 100-999/1000`, `bytes 100-999/*` and `bytes */1000`; null if malformed. */
+    @VisibleForTesting
+    internal fun parseContentRange(header: String?): ContentRange? {
+        val match = CONTENT_RANGE_REGEX.matchEntire(header?.trim() ?: return null) ?: return null
+        val (first, last, total) = match.destructured
+        return ContentRange(
+            first = first.toLongOrNull(),
+            last = last.toLongOrNull(),
+            total = total.toLongOrNull() // "*" -> null
+        )
+    }
 
     fun delete(context: Context, entry: ModelEntry) {
         fileFor(context, entry).delete()

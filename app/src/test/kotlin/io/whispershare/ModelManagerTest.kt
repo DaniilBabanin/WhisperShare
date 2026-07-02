@@ -2,15 +2,19 @@ package io.whispershare
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 
 /**
  * Pure-JVM tests for [ModelManager]'s framework-free logic: filename sanitisation,
- * GGML magic validation, and model id / download-URL construction.
+ * GGML magic validation, model id / download-URL construction, and HTTP Range
+ * resume decisions.
  */
 class ModelManagerTest {
 
@@ -155,6 +159,160 @@ class ModelManagerTest {
                 "${m.name} sha256 must be 64 hex chars",
                 m.sha256.matches(Regex("[0-9a-f]{64}"))
             )
+        }
+    }
+
+    // ---------- parseContentRange ----------
+
+    @Test
+    fun `parses standard content-range`() {
+        assertEquals(
+            ModelManager.ContentRange(first = 100, last = 999, total = 1000),
+            ModelManager.parseContentRange("bytes 100-999/1000")
+        )
+    }
+
+    @Test
+    fun `parses content-range with unknown total`() {
+        assertEquals(
+            ModelManager.ContentRange(first = 100, last = 999, total = null),
+            ModelManager.parseContentRange("bytes 100-999/*")
+        )
+    }
+
+    @Test
+    fun `parses unsatisfied-range form from a 416`() {
+        assertEquals(
+            ModelManager.ContentRange(first = null, last = null, total = 1000),
+            ModelManager.parseContentRange("bytes */1000")
+        )
+    }
+
+    @Test
+    fun `content-range parsing ignores case and surrounding whitespace`() {
+        assertEquals(
+            ModelManager.ContentRange(first = 0, last = 9, total = 10),
+            ModelManager.parseContentRange("  BYTES 0-9/10  ")
+        )
+    }
+
+    @Test
+    fun `rejects malformed content-range headers`() {
+        assertNull(ModelManager.parseContentRange(null))
+        assertNull(ModelManager.parseContentRange(""))
+        assertNull(ModelManager.parseContentRange("garbage"))
+        assertNull(ModelManager.parseContentRange("items 0-9/10"))
+        assertNull(ModelManager.parseContentRange("bytes -5-9/10"))
+        assertNull(ModelManager.parseContentRange("bytes 0-9"))
+    }
+
+    // ---------- resumeActionFor ----------
+
+    @Test
+    fun `206 starting at the resume offset appends with total from content-range`() {
+        val action = ModelManager.resumeActionFor(
+            responseCode = 206,
+            resumeOffset = 400,
+            contentRangeHeader = "bytes 400-999/1000",
+            contentLength = 600
+        )
+        assertEquals(ModelManager.ResumeAction.Append(total = 1000), action)
+    }
+
+    @Test
+    fun `206 with unknown total derives it from offset plus content-length`() {
+        val action = ModelManager.resumeActionFor(
+            responseCode = 206,
+            resumeOffset = 400,
+            contentRangeHeader = "bytes 400-999/*",
+            contentLength = 600
+        )
+        assertEquals(ModelManager.ResumeAction.Append(total = 1000), action)
+    }
+
+    @Test
+    fun `206 with no total and no content-length appends with unknown total`() {
+        val action = ModelManager.resumeActionFor(
+            responseCode = 206,
+            resumeOffset = 400,
+            contentRangeHeader = "bytes 400-999/*",
+            contentLength = -1
+        )
+        assertEquals(ModelManager.ResumeAction.Append(total = -1), action)
+    }
+
+    @Test
+    fun `206 starting at the wrong offset restarts from scratch`() {
+        val action = ModelManager.resumeActionFor(
+            responseCode = 206,
+            resumeOffset = 400,
+            contentRangeHeader = "bytes 0-999/1000",
+            contentLength = 1000
+        )
+        assertEquals(ModelManager.ResumeAction.DiscardAndRestart, action)
+    }
+
+    @Test
+    fun `206 without a usable content-range restarts from scratch`() {
+        for (header in listOf(null, "", "garbage")) {
+            assertEquals(
+                "header '$header' must force a restart",
+                ModelManager.ResumeAction.DiscardAndRestart,
+                ModelManager.resumeActionFor(206, 400, header, 600)
+            )
+        }
+    }
+
+    @Test
+    fun `200 means the server ignored the range and sends the full body`() {
+        val action = ModelManager.resumeActionFor(
+            responseCode = 200,
+            resumeOffset = 400,
+            contentRangeHeader = null,
+            contentLength = 1000
+        )
+        assertEquals(ModelManager.ResumeAction.FullBody, action)
+    }
+
+    @Test
+    fun `416 with the part file already complete skips straight to verification`() {
+        val action = ModelManager.resumeActionFor(
+            responseCode = 416,
+            resumeOffset = 1000,
+            contentRangeHeader = "bytes */1000",
+            contentLength = -1
+        )
+        assertEquals(ModelManager.ResumeAction.AlreadyComplete, action)
+    }
+
+    @Test
+    fun `416 with a different total restarts from scratch`() {
+        val action = ModelManager.resumeActionFor(
+            responseCode = 416,
+            resumeOffset = 1200,
+            contentRangeHeader = "bytes */1000",
+            contentLength = -1
+        )
+        assertEquals(ModelManager.ResumeAction.DiscardAndRestart, action)
+    }
+
+    @Test
+    fun `416 without a content-range restarts from scratch`() {
+        val action = ModelManager.resumeActionFor(
+            responseCode = 416,
+            resumeOffset = 400,
+            contentRangeHeader = null,
+            contentLength = -1
+        )
+        assertEquals(ModelManager.ResumeAction.DiscardAndRestart, action)
+    }
+
+    @Test
+    fun `unexpected status codes fail the download`() {
+        for (code in listOf(403, 500, 503)) {
+            assertThrows(IOException::class.java) {
+                ModelManager.resumeActionFor(code, 400, null, -1)
+            }
         }
     }
 }

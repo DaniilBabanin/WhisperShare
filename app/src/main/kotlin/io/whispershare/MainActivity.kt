@@ -145,7 +145,8 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
     }
 
     fun cancelDownload(id: String) {
-        // ModelManager.download's finally block removes the .part file.
+        // ModelManager.download removes the .part file on cancellation
+        // (failed downloads keep it so a retry can resume).
         downloadJobs[id]?.cancel()
     }
 
