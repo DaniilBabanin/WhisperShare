@@ -6,6 +6,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -197,13 +198,15 @@ object AudioDecoder {
         }
     }
 
-    private fun shortsToFloats(src: ShortArray, size: Int): FloatArray {
+    @VisibleForTesting
+    internal fun shortsToFloats(src: ShortArray, size: Int): FloatArray {
         val out = FloatArray(size)
         for (i in 0 until size) out[i] = src[i] / 32768f
         return out
     }
 
-    private fun downmix(src: ShortArray, size: Int, channels: Int): FloatArray {
+    @VisibleForTesting
+    internal fun downmix(src: ShortArray, size: Int, channels: Int): FloatArray {
         val frames = (size + channels - 1) / channels // tolerate a trailing partial frame
         val out = FloatArray(frames)
         var idx = 0
@@ -224,7 +227,8 @@ object AudioDecoder {
      * suppress aliasing; when upsampling, linear-interpolates. Good enough for speech;
      * whisper preprocesses again internally.
      */
-    private fun resampleLinear(input: FloatArray, srcRate: Int, dstRate: Int): FloatArray {
+    @VisibleForTesting
+    internal fun resampleLinear(input: FloatArray, srcRate: Int, dstRate: Int): FloatArray {
         if (srcRate == dstRate) return input
         val ratio = srcRate.toDouble() / dstRate.toDouble()
         val outLen = (input.size / ratio).toInt()

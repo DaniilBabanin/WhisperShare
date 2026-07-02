@@ -3,6 +3,7 @@ package io.whispershare
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -275,7 +276,8 @@ object ModelManager {
     }
 
     /** True if the file starts with GGML_FILE_MAGIC ("ggml", little-endian on disk). */
-    private fun hasGgmlMagic(file: File): Boolean {
+    @VisibleForTesting
+    internal fun hasGgmlMagic(file: File): Boolean {
         val header = ByteArray(4)
         FileInputStream(file).use { input ->
             var read = 0
@@ -349,7 +351,8 @@ object ModelManager {
         writeCustomManifest(context, current)
     }
 
-    private fun sanitiseFilename(name: String): String {
+    @VisibleForTesting
+    internal fun sanitiseFilename(name: String): String {
         val cleaned = name.lowercase()
             .replace(Regex("[^a-z0-9._-]"), "_")
             .trim('_', '.', '-')
