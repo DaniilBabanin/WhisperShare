@@ -123,4 +123,10 @@
     <string name="notification_done_title">Transkription abgeschlossen</string>
     <string name="notification_error_title">Transkription fehlgeschlagen</string>
     <string name="error_result_gone">Diese Transkription ist nicht mehr verfügbar. Teile die Audiodatei erneut, um sie neu zu transkribieren.</string>
+
+    <!-- Multi-file share (W3-B) -->
+    <string name="batch_file_position">Datei %1$d von %2$d</string>
+    <string name="batch_separator">— %1$s —</string>
+    <string name="batch_fallback_name">Audio %1$d</string>
+    <string name="batch_file_error">[Datei konnte nicht transkribiert werden: %1$s]</string>
 </resources>

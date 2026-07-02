@@ -31,9 +31,9 @@ class TranscribeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val uri = extractUri(intent)
-        val viewResultOnly = uri == null && intent.action == ACTION_VIEW_RESULT
-        if (uri == null && !viewResultOnly) {
+        val uris = extractUris(intent)
+        val viewResultOnly = uris.isEmpty() && intent.action == ACTION_VIEW_RESULT
+        if (uris.isEmpty() && !viewResultOnly) {
             setContent {
                 WhisperShareTheme {
                     TranscribeScreen(
@@ -51,8 +51,8 @@ class TranscribeActivity : ComponentActivity() {
 
         // Only kick off on a fresh launch — a config-change recreation must not
         // cancel and restart the in-flight run in the service.
-        if (uri != null && savedInstanceState == null) {
-            startTranscription(uri)
+        if (uris.isNotEmpty() && savedInstanceState == null) {
+            startTranscription(uris)
         }
 
         setContent {
@@ -70,7 +70,7 @@ class TranscribeActivity : ComponentActivity() {
                     onCopy = { text -> ShareUtils.copy(this, text) },
                     onShare = { text -> ShareUtils.share(this, text) },
                     onCancel = { vm.cancel() },
-                    onRetry = uri?.let { u -> { startTranscription(u) } }
+                    onRetry = uris.takeIf { it.isNotEmpty() }?.let { u -> { startTranscription(u) } }
                 )
             }
         }
@@ -79,11 +79,11 @@ class TranscribeActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        extractUri(intent)?.let { startTranscription(it) }
+        extractUris(intent).takeIf { it.isNotEmpty() }?.let { startTranscription(it) }
     }
 
-    private fun startTranscription(uri: Uri) {
-        vm.start(uri)
+    private fun startTranscription(uris: List<Uri>) {
+        vm.start(uris)
         // POST_NOTIFICATIONS is runtime on 33+. Ask, but never block on it —
         // the service runs fine without a visible notification.
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -93,15 +93,16 @@ class TranscribeActivity : ComponentActivity() {
         }
     }
 
-    private fun extractUri(intent: Intent?): Uri? {
-        if (intent == null) return null
+    /** All shared URIs, in share order. Single-URI actions yield one-element lists. */
+    private fun extractUris(intent: Intent?): List<Uri> {
+        if (intent == null) return emptyList()
         return when (intent.action) {
-            Intent.ACTION_SEND -> intent.parcelableExtra(Intent.EXTRA_STREAM)
+            Intent.ACTION_SEND -> listOfNotNull(intent.parcelableExtra(Intent.EXTRA_STREAM))
             Intent.ACTION_SEND_MULTIPLE ->
-                intent.parcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.firstOrNull()
-            Intent.ACTION_VIEW -> intent.data
-            ACTION_VIEW_RESULT -> null
-            else -> intent.data ?: intent.parcelableExtra(Intent.EXTRA_STREAM)
+                intent.parcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.filterNotNull().orEmpty()
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            ACTION_VIEW_RESULT -> emptyList()
+            else -> listOfNotNull(intent.data ?: intent.parcelableExtra(Intent.EXTRA_STREAM))
         }
     }
 
@@ -128,7 +129,7 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
 
     val state: StateFlow<TranscribeUiState> = TranscriptionService.state
 
-    fun start(uri: Uri) = TranscriptionService.start(getApplication(), uri)
+    fun start(uris: List<Uri>) = TranscriptionService.start(getApplication(), uris)
 
     fun cancel() = TranscriptionService.cancel(getApplication())
 }

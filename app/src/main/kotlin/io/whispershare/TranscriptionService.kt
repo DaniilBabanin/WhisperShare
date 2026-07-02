@@ -5,12 +5,14 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.provider.OpenableColumns
 import android.util.Log
 import androidx.core.content.ContextCompat
 import io.whispershare.ui.TranscribeUiState
@@ -54,6 +56,9 @@ class TranscriptionService : Service() {
     private var currentJob: Job? = null
     @Volatile private var lastNotifiedPercent = -1
 
+    /** "File 2 of 3" while a multi-file batch runs; null for single files. */
+    @Volatile private var currentFileLabel: String? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -77,10 +82,10 @@ class TranscriptionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_TRANSCRIBE -> {
-                val uri = intent.data
-                if (uri != null) {
+                val uris = extractUris(intent)
+                if (uris.isNotEmpty()) {
                     goForeground()
-                    beginTranscription(uri)
+                    beginTranscription(uris)
                 } else if (currentJob == null) {
                     stopSelf()
                 }
@@ -111,14 +116,25 @@ class TranscriptionService : Service() {
 
     // ---------- pipeline lifecycle ----------
 
-    private fun beginTranscription(uri: Uri) {
+    /** All URIs of the batch: ClipData items (multi-share) or intent.data (single). */
+    private fun extractUris(intent: Intent): List<Uri> {
+        val clip = intent.clipData
+        if (clip != null && clip.itemCount > 0) {
+            val uris = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+            if (uris.isNotEmpty()) return uris
+        }
+        return listOfNotNull(intent.data)
+    }
+
+    private fun beginTranscription(uris: List<Uri>) {
         currentJob?.cancel()
         currentJob = null
         lastNotifiedPercent = -1
+        currentFileLabel = null
         _state.value = TranscribeUiState.Stage(getString(R.string.stage_loading_model), progress = null)
         val job = scope.launch {
             val finalState = try {
-                runPipeline(uri)
+                runPipeline(uris)
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
@@ -155,156 +171,215 @@ class TranscriptionService : Service() {
     }
 
     /**
-     * The transcription pipeline, moved wholesale from TranscribeViewModel.
-     * Returns the terminal state (Done or Error); intermediate Stage/Streaming
-     * states are pushed to [_state] directly. Throws CancellationException on
-     * cancel — callers must let it propagate.
+     * The transcription pipeline. The model is resolved and loaded once, then
+     * each URI is transcribed sequentially (one engine, serialized by design).
+     * Multi-file batches join results under per-file headers; a failing file
+     * gets an error marker and the batch continues. Returns the terminal state
+     * (Done or Error); intermediate Stage/Streaming states are pushed to
+     * [_state] directly. Throws CancellationException on cancel — callers
+     * must let it propagate (cancel aborts the whole batch).
      */
-    private suspend fun runPipeline(uri: Uri): TranscribeUiState {
+    private suspend fun runPipeline(uris: List<Uri>): TranscribeUiState {
         // Native callbacks keep firing until the abort flag is polled;
         // guard them with this so a stale segment can't overwrite the
         // "cancelled" state written by cancelCurrent().
         val self = kotlin.coroutines.coroutineContext.job
-        var crumb: File? = null
-        try {
-            val ctx = applicationContext
-            val entry = withContext(Dispatchers.IO) {
-                ModelManager.entryById(ctx, prefs.selectedModelId)
-            }
-            if (entry == null) {
-                return TranscribeUiState.Error(getString(R.string.error_model_unavailable))
-            }
-            val modelFile = ModelManager.fileFor(ctx, entry)
-            if (!withContext(Dispatchers.IO) { modelFile.exists() }) {
-                return TranscribeUiState.Error(
-                    getString(R.string.error_model_not_downloaded, entry.displayName)
-                )
-            }
-
-            var useGpu = prefs.useGpu
-            var notice: String? = null
-
-            // Pick up a one-shot notice from a previous-run GPU crash.
-            if (prefs.gpuCrashedNotice) {
-                prefs.gpuCrashedNotice = false
-                notice = getString(R.string.notice_gpu_crash_previous)
-            }
-
-            val loadResult = WhisperEngine.load(modelFile, useGpu = useGpu)
-            if (loadResult.isFailure && useGpu) {
-                // GPU init blew up (e.g. Mali driver) — fall back to CPU and remember it.
-                prefs.useGpu = false
-                useGpu = false
-                notice = getString(R.string.notice_gpu_init_failed)
-                WhisperEngine.load(modelFile, useGpu = false)
-                    .getOrElse {
-                        return TranscribeUiState.Error(getString(R.string.error_load_model, it.message ?: ""))
-                    }
-            } else if (loadResult.isFailure) {
-                return TranscribeUiState.Error(
-                    getString(R.string.error_load_model, loadResult.exceptionOrNull()?.message ?: "")
-                )
-            }
-
-            _state.value = TranscribeUiState.Stage(getString(R.string.stage_decoding_audio), null)
-            val pcm = AudioDecoder.decodeToPcmWithFallback(ctx, uri)
-            val durationSec = pcm.size / 16_000.0
-
-            suspend fun runOnce(): String {
-                _state.value = TranscribeUiState.Stage(
-                    getString(R.string.transcribe_progress_duration, durationSec),
-                    0f
-                )
-                val builder = StringBuilder()
-                return WhisperEngine.transcribe(
-                    pcm16k = pcm,
-                    language = prefs.language.takeIf { it.isNotBlank() },
-                    translate = prefs.translateToEnglish,
-                    threads = prefs.resolvedThreads(),
-                    highQuality = prefs.highQuality,
-                    onSegment = { seg ->
-                        builder.append(seg)
-                        val partial = builder.toString()
-                        if (self.isActive) {
-                            _state.update { cur ->
-                                TranscribeUiState.Streaming(
-                                    partial = partial,
-                                    durationSec = durationSec,
-                                    progress = (cur as? TranscribeUiState.Streaming)?.progress
-                                )
-                            }
-                        }
-                    },
-                    onProgress = { pct ->
-                        if (self.isActive) {
-                            _state.update { cur ->
-                                TranscribeUiState.Streaming(
-                                    partial = (cur as? TranscribeUiState.Streaming)?.partial ?: "",
-                                    durationSec = durationSec,
-                                    progress = pct.coerceIn(0f, 1f)
-                                )
-                            }
-                            updateProgressNotification(pct.coerceIn(0f, 1f))
-                        }
-                    }
-                )
-            }
-
-            // Crash-crumb: write before any GPU run. Its only job is to
-            // detect hard native aborts (ggml_abort, vk::DeviceLostError)
-            // that kill the process before Kotlin can react — then the crumb
-            // survives and WhisperApp.onCreate flips us to CPU on next
-            // launch. Every path that stays in Kotlin (success, exception,
-            // cancellation) must delete it — see the finally below.
-            if (useGpu) {
-                val c = File(ctx.filesDir, WhisperApp.GPU_CRUMB_FILE)
-                withContext(Dispatchers.IO) { c.writeText("running") }
-                crumb = c
-            }
-
-            // Snapshot the native error so a stale message from a previous
-            // failed load/run can't trigger a false GPU-crash retry below.
-            val errorBefore = WhisperEngine.lastError()
-            val started = System.currentTimeMillis()
-            var text = runOnce()
-            crumb?.let { c -> withContext(Dispatchers.IO) { c.delete() } }
-            crumb = null
-            val errorNow = WhisperEngine.lastError()
-            if (text.isBlank() && useGpu && errorNow.isNotBlank() && errorNow != errorBefore) {
-                // Native error mid-transcribe — most likely vk::DeviceLostError. Force CPU and retry.
-                prefs.useGpu = false
-                useGpu = false
-                notice = getString(R.string.notice_gpu_error_switched, errorNow)
-                WhisperEngine.release()
-                WhisperEngine.load(modelFile, useGpu = false).getOrElse {
-                    return TranscribeUiState.Error(getString(R.string.error_reload_cpu, it.message ?: ""))
-                }
-                text = runOnce()
-            }
-            val ms = System.currentTimeMillis() - started
-
-            return TranscribeUiState.Done(
-                text = listOfNotNull(notice, text.ifBlank { getString(R.string.no_speech_detected) })
-                    .joinToString("\n\n"),
-                durationSec = durationSec,
-                elapsedMs = ms,
-                backend = WhisperEngine.activeBackend
+        val ctx = applicationContext
+        val entry = withContext(Dispatchers.IO) {
+            ModelManager.entryById(ctx, prefs.selectedModelId)
+        }
+        if (entry == null) {
+            return TranscribeUiState.Error(getString(R.string.error_model_unavailable))
+        }
+        val modelFile = ModelManager.fileFor(ctx, entry)
+        if (!withContext(Dispatchers.IO) { modelFile.exists() }) {
+            return TranscribeUiState.Error(
+                getString(R.string.error_model_not_downloaded, entry.displayName)
             )
-        } finally {
-            // The crumb must only survive a hard native crash. Any path
-            // that reaches this finally means Kotlin is still alive, so
-            // delete it — otherwise the next launch misreports "GPU crash"
-            // and forces CPU.
-            crumb?.let { c ->
-                withContext(NonCancellable + Dispatchers.IO) { c.delete() }
+        }
+
+        var useGpu = prefs.useGpu
+        var notice: String? = null
+
+        // Pick up a one-shot notice from a previous-run GPU crash.
+        if (prefs.gpuCrashedNotice) {
+            prefs.gpuCrashedNotice = false
+            notice = getString(R.string.notice_gpu_crash_previous)
+        }
+
+        val loadResult = WhisperEngine.load(modelFile, useGpu = useGpu)
+        if (loadResult.isFailure && useGpu) {
+            // GPU init blew up (e.g. Mali driver) — fall back to CPU and remember it.
+            prefs.useGpu = false
+            useGpu = false
+            notice = getString(R.string.notice_gpu_init_failed)
+            WhisperEngine.load(modelFile, useGpu = false)
+                .getOrElse {
+                    return TranscribeUiState.Error(getString(R.string.error_load_model, it.message ?: ""))
+                }
+        } else if (loadResult.isFailure) {
+            return TranscribeUiState.Error(
+                getString(R.string.error_load_model, loadResult.exceptionOrNull()?.message ?: "")
+            )
+        }
+
+        /**
+         * Transcribe one file; returns its text and duration. Streaming
+         * states carry [prefix] + partial so the UI shows the running
+         * combined transcript across the batch. Throws on failure —
+         * the loop below decides whether that sinks the batch.
+         */
+        suspend fun transcribeOne(uri: Uri, prefix: String, fileLabel: String?): Pair<String, Double> {
+            var crumb: File? = null
+            try {
+                _state.value = TranscribeUiState.Stage(
+                    getString(R.string.stage_decoding_audio), null, fileLabel
+                )
+                val pcm = AudioDecoder.decodeToPcmWithFallback(ctx, uri)
+                val durationSec = pcm.size / 16_000.0
+
+                suspend fun runOnce(): String {
+                    _state.value = TranscribeUiState.Stage(
+                        getString(R.string.transcribe_progress_duration, durationSec),
+                        0f,
+                        fileLabel
+                    )
+                    val builder = StringBuilder()
+                    return WhisperEngine.transcribe(
+                        pcm16k = pcm,
+                        language = prefs.language.takeIf { it.isNotBlank() },
+                        translate = prefs.translateToEnglish,
+                        threads = prefs.resolvedThreads(),
+                        highQuality = prefs.highQuality,
+                        onSegment = { seg ->
+                            builder.append(seg)
+                            val partial = prefix + builder.toString()
+                            if (self.isActive) {
+                                _state.update { cur ->
+                                    TranscribeUiState.Streaming(
+                                        partial = partial,
+                                        durationSec = durationSec,
+                                        progress = (cur as? TranscribeUiState.Streaming)?.progress,
+                                        fileLabel = fileLabel
+                                    )
+                                }
+                            }
+                        },
+                        onProgress = { pct ->
+                            if (self.isActive) {
+                                _state.update { cur ->
+                                    TranscribeUiState.Streaming(
+                                        partial = (cur as? TranscribeUiState.Streaming)?.partial ?: prefix,
+                                        durationSec = durationSec,
+                                        progress = pct.coerceIn(0f, 1f),
+                                        fileLabel = fileLabel
+                                    )
+                                }
+                                updateProgressNotification(pct.coerceIn(0f, 1f))
+                            }
+                        }
+                    )
+                }
+
+                // Crash-crumb: write before any GPU run. Its only job is to
+                // detect hard native aborts (ggml_abort, vk::DeviceLostError)
+                // that kill the process before Kotlin can react — then the crumb
+                // survives and WhisperApp.onCreate flips us to CPU on next
+                // launch. Every path that stays in Kotlin (success, exception,
+                // cancellation) must delete it — see the finally below.
+                if (useGpu) {
+                    val c = File(ctx.filesDir, WhisperApp.GPU_CRUMB_FILE)
+                    withContext(Dispatchers.IO) { c.writeText("running") }
+                    crumb = c
+                }
+
+                // Snapshot the native error so a stale message from a previous
+                // failed load/run can't trigger a false GPU-crash retry below.
+                val errorBefore = WhisperEngine.lastError()
+                var text = runOnce()
+                crumb?.let { c -> withContext(Dispatchers.IO) { c.delete() } }
+                crumb = null
+                val errorNow = WhisperEngine.lastError()
+                if (text.isBlank() && useGpu && errorNow.isNotBlank() && errorNow != errorBefore) {
+                    // Native error mid-transcribe — most likely vk::DeviceLostError. Force CPU and retry.
+                    prefs.useGpu = false
+                    useGpu = false
+                    notice = getString(R.string.notice_gpu_error_switched, errorNow)
+                    WhisperEngine.release()
+                    WhisperEngine.load(modelFile, useGpu = false).getOrElse {
+                        throw IllegalStateException(getString(R.string.error_reload_cpu, it.message ?: ""))
+                    }
+                    text = runOnce()
+                }
+                return text to durationSec
+            } finally {
+                // The crumb must only survive a hard native crash. Any path
+                // that reaches this finally means Kotlin is still alive, so
+                // delete it — otherwise the next launch misreports "GPU crash"
+                // and forces CPU.
+                crumb?.let { c ->
+                    withContext(NonCancellable + Dispatchers.IO) { c.delete() }
+                }
             }
         }
+
+        val multi = uris.size > 1
+        val combined = StringBuilder()
+        var totalDurationSec = 0.0
+        val started = System.currentTimeMillis()
+        for ((index, uri) in uris.withIndex()) {
+            val fileLabel =
+                if (multi) getString(R.string.batch_file_position, index + 1, uris.size) else null
+            currentFileLabel = fileLabel
+            lastNotifiedPercent = -1
+            if (multi) {
+                val name = withContext(Dispatchers.IO) { displayNameFor(ctx, uri) }
+                    ?: getString(R.string.batch_fallback_name, index + 1)
+                if (combined.isNotEmpty()) combined.append("\n\n")
+                combined.append(getString(R.string.batch_separator, name)).append('\n')
+            }
+            try {
+                val (text, durationSec) = transcribeOne(uri, combined.toString(), fileLabel)
+                totalDurationSec += durationSec
+                combined.append(text.ifBlank { getString(R.string.no_speech_detected) })
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                // Single file: keep the old contract — the whole run fails.
+                // Batch: mark this file and keep going with the next one.
+                if (!multi) throw t
+                combined.append(getString(R.string.batch_file_error, t.message ?: t.javaClass.simpleName))
+            }
+        }
+        val ms = System.currentTimeMillis() - started
+
+        return TranscribeUiState.Done(
+            text = listOfNotNull(notice, combined.toString()).joinToString("\n\n"),
+            durationSec = totalDurationSec,
+            elapsedMs = ms,
+            backend = WhisperEngine.activeBackend
+        )
+    }
+
+    /** DISPLAY_NAME via ContentResolver; null when the provider doesn't offer one. */
+    private fun displayNameFor(ctx: Context, uri: Uri): String? = try {
+        ctx.contentResolver.query(
+            uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+        )?.use { cursor ->
+            val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && cursor.moveToFirst()) {
+                cursor.getString(idx)?.takeIf { it.isNotBlank() }
+            } else null
+        }
+    } catch (t: Throwable) {
+        Log.w(TAG, "DISPLAY_NAME query failed for $uri", t)
+        null
     }
 
     // ---------- notifications ----------
 
     private fun goForeground() {
-        val notification = buildProgressNotification(null)
+        val notification = buildProgressNotification(null, null)
         try {
             when {
                 Build.VERSION.SDK_INT >= 35 ->
@@ -337,7 +412,7 @@ class TranscriptionService : Service() {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    private fun buildProgressNotification(progress: Float?): Notification {
+    private fun buildProgressNotification(progress: Float?, fileLabel: String?): Notification {
         val cancelPending = PendingIntent.getService(
             this, 1,
             Intent(this, TranscriptionService::class.java).setAction(ACTION_CANCEL),
@@ -347,6 +422,8 @@ class TranscriptionService : Service() {
             .setSmallIcon(R.drawable.ic_stat_transcribe)
             .setContentTitle(getString(R.string.notification_transcribing_title))
             .apply {
+                // Batch position ("File 2 of 3") in the header, next to the app name.
+                if (fileLabel != null) setSubText(fileLabel)
                 if (progress != null) {
                     val pct = (progress * 100).toInt()
                     setProgress(100, pct, false)
@@ -371,7 +448,10 @@ class TranscriptionService : Service() {
         val pct = (progress * 100).toInt()
         if (pct == lastNotifiedPercent) return
         lastNotifiedPercent = pct
-        notificationManager.notify(NOTIFICATION_ID_PROGRESS, buildProgressNotification(progress))
+        notificationManager.notify(
+            NOTIFICATION_ID_PROGRESS,
+            buildProgressNotification(progress, currentFileLabel)
+        )
     }
 
     private fun showFinalNotification(title: String, text: String) {
@@ -403,15 +483,22 @@ class TranscriptionService : Service() {
         val state: StateFlow<TranscribeUiState> = _state.asStateFlow()
 
         /**
-         * Start (or replace) a transcription. The read grant on [uri] is
-         * re-granted to the service via the intent so access outlives the
-         * sharing activity.
+         * Start (or replace) a transcription of one or more files. The read
+         * grants on [uris] are re-granted to the service via the intent so
+         * access outlives the sharing activity: FLAG_GRANT_READ_URI_PERMISSION
+         * operates on intent.data AND on every URI in the intent's ClipData
+         * (see Intent.setClipData docs) — ClipData is the grant-carrying
+         * channel for multiple content: URIs.
          */
-        fun start(context: Context, uri: Uri) {
+        fun start(context: Context, uris: List<Uri>) {
+            if (uris.isEmpty()) return
             val intent = Intent(context, TranscriptionService::class.java)
                 .setAction(ACTION_TRANSCRIBE)
-                .setData(uri)
+                .setData(uris.first())
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val clip = ClipData.newRawUri(null, uris.first())
+            for (i in 1 until uris.size) clip.addItem(ClipData.Item(uris[i]))
+            intent.clipData = clip
             ContextCompat.startForegroundService(context, intent)
         }
 
