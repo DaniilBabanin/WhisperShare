@@ -1,9 +1,16 @@
 package io.whispershare
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -19,6 +26,14 @@ object WhisperEngine {
     @Volatile private var loadedPath: String? = null
     @Volatile private var loadedWithGpu: Boolean = false
 
+    /**
+     * Serializes load/transcribe/release. Without it, release() (or load()'s
+     * internal release) can free the native context while whisper_full is still
+     * running on it — a use-after-free that also bites across activities
+     * (benchmark and transcribe share this singleton).
+     */
+    private val mutex = Mutex()
+
     val isLoaded: Boolean get() = ctxPtr.get() != 0L
     /** "vulkan" if the binary was compiled with Vulkan support, else "cpu". */
     val compiledBackend: String get() = nativeBackendInfo()
@@ -29,31 +44,37 @@ object WhisperEngine {
     /** Last native error message, "" if none. Populated by failed init/transcribe. */
     fun lastError(): String = nativeLastError()
 
-    suspend fun load(modelFile: File, useGpu: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
-        if (!modelFile.exists()) {
-            return@withContext Result.failure(IllegalStateException("Model not found: ${modelFile.absolutePath}"))
+    suspend fun load(modelFile: File, useGpu: Boolean): Result<Unit> = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            if (!modelFile.exists()) {
+                return@withContext Result.failure(IllegalStateException("Model not found: ${modelFile.absolutePath}"))
+            }
+            // Already loaded with same parameters? No-op.
+            if (isLoaded && loadedPath == modelFile.absolutePath && loadedWithGpu == useGpu) {
+                return@withContext Result.success(Unit)
+            }
+            // Different model or backend toggle — release first.
+            releaseLocked()
+            val ptr = nativeInitContext(modelFile.absolutePath, useGpu)
+            if (ptr == 0L) {
+                return@withContext Result.failure(IllegalStateException("whisper_init_from_file returned null"))
+            }
+            ctxPtr.set(ptr)
+            loadedPath = modelFile.absolutePath
+            loadedWithGpu = useGpu
+            Log.i(TAG, "Loaded ${modelFile.name} (gpu=$useGpu, backend=${nativeBackendInfo()})")
+            Result.success(Unit)
         }
-        // Already loaded with same parameters? No-op.
-        if (isLoaded && loadedPath == modelFile.absolutePath && loadedWithGpu == useGpu) {
-            return@withContext Result.success(Unit)
-        }
-        // Different model or backend toggle — release first.
-        release()
-        val ptr = nativeInitContext(modelFile.absolutePath, useGpu)
-        if (ptr == 0L) {
-            return@withContext Result.failure(IllegalStateException("whisper_init_from_file returned null"))
-        }
-        ctxPtr.set(ptr)
-        loadedPath = modelFile.absolutePath
-        loadedWithGpu = useGpu
-        Log.i(TAG, "Loaded ${modelFile.name} (gpu=$useGpu, backend=${nativeBackendInfo()})")
-        Result.success(Unit)
     }
 
-    fun release() {
+    suspend fun release() = mutex.withLock { releaseLocked() }
+
+    /** Must only be called while [mutex] is held. */
+    private fun releaseLocked() {
         val ptr = ctxPtr.getAndSet(0L)
         if (ptr != 0L) nativeFreeContext(ptr)
         loadedPath = null
+        loadedWithGpu = false
     }
 
     /**
@@ -73,7 +94,7 @@ object WhisperEngine {
         highQuality: Boolean = false,
         onSegment: ((String) -> Unit)? = null,
         onProgress: ((Float) -> Unit)? = null
-    ): String = withContext(Dispatchers.Default) {
+    ): String = mutex.withLock {
         val ptr = ctxPtr.get()
         check(ptr != 0L) { "WhisperEngine not loaded — call load() first" }
         val cb = if (onSegment != null || onProgress != null) {
@@ -82,7 +103,28 @@ object WhisperEngine {
                 this.onProgress = onProgress
             }
         } else null
-        nativeTranscribe(ptr, pcm16k, language ?: "", translate, threads, highQuality, cb)
+        coroutineScope {
+            val finished = AtomicBoolean(false)
+            // Watcher: as soon as the caller is cancelled, set the native abort
+            // flag so whisper_full returns early instead of running to the end.
+            // coroutineScope waits for this child, so the abort can never fire
+            // after the mutex is released (ptr stays valid for its lifetime).
+            val watcher = launch {
+                try {
+                    awaitCancellation()
+                } finally {
+                    if (!finished.get()) nativeRequestAbort(ptr)
+                }
+            }
+            try {
+                withContext(Dispatchers.IO) {
+                    nativeTranscribe(ptr, pcm16k, language ?: "", translate, threads, highQuality, cb)
+                }
+            } finally {
+                finished.set(true)
+                watcher.cancel()
+            }
+        }
     }
 
     /**
@@ -95,9 +137,13 @@ object WhisperEngine {
         pcm16k: FloatArray,
         language: String? = null,
         threads: Int = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(2)
-    ): Result<String> = runCatching {
+    ): Result<String> = try {
         load(modelFile, useGpu).getOrThrow()
-        transcribe(pcm16k = pcm16k, language = language, translate = false, threads = threads)
+        Result.success(transcribe(pcm16k = pcm16k, language = language, translate = false, threads = threads))
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (t: Throwable) {
+        Result.failure(t)
     }
 
     // ---------- native ----------
@@ -112,6 +158,11 @@ object WhisperEngine {
         useBeam: Boolean,
         callback: TranscribeCallback?
     ): String
+    /**
+     * Sets an atomic abort flag polled by nativeTranscribe's abort_callback;
+     * the flag resets at the start of each transcribe.
+     */
+    private external fun nativeRequestAbort(ctxPtr: Long)
     private external fun nativeBackendInfo(): String
     private external fun nativeLastError(): String
 }

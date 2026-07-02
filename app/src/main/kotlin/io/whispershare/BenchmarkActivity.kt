@@ -13,10 +13,14 @@ import androidx.lifecycle.viewModelScope
 import io.whispershare.ui.BenchmarkScreen
 import io.whispershare.ui.BenchmarkUiState
 import io.whispershare.ui.theme.WhisperShareTheme
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class BenchmarkActivity : ComponentActivity() {
 
@@ -42,13 +46,9 @@ class BenchmarkActivity : ComponentActivity() {
 class BenchmarkViewModel(app: android.app.Application) : AndroidViewModel(app) {
 
     private val prefs = AppPreferences(app)
-    private val _state = MutableStateFlow(initial())
-    val state: StateFlow<BenchmarkUiState> = _state.asStateFlow()
-
-    private fun initial(): BenchmarkUiState {
-        val ctx = getApplication<android.app.Application>()
-        return BenchmarkUiState(
-            installedModels = ModelManager.listInstalled(ctx),
+    private val _state = MutableStateFlow(
+        BenchmarkUiState(
+            installedModels = emptyList(),
             gpuSupported = Benchmark.gpuSupported(),
             results = emptyList(),
             running = false,
@@ -56,26 +56,39 @@ class BenchmarkViewModel(app: android.app.Application) : AndroidViewModel(app) {
             currentLabel = null,
             errorMessage = null
         )
+    )
+    val state: StateFlow<BenchmarkUiState> = _state.asStateFlow()
+
+    init {
+        // Manifest read hits disk — keep it off the main thread.
+        viewModelScope.launch {
+            val installed = withContext(Dispatchers.IO) {
+                ModelManager.listInstalled(getApplication())
+            }
+            _state.update { it.copy(installedModels = installed) }
+        }
     }
 
     fun onAudioPicked(uri: Uri) {
         val ctx = getApplication<android.app.Application>()
-        val installed = ModelManager.listInstalled(ctx)
-        if (installed.isEmpty()) {
-            _state.value = _state.value.copy(
-                errorMessage = "No models installed. Download or import a model first."
-            )
-            return
-        }
         viewModelScope.launch {
             try {
-                _state.value = _state.value.copy(
-                    running = true,
-                    progress = 0f,
-                    currentLabel = "Decoding audio…",
-                    errorMessage = null,
-                    results = emptyList()
-                )
+                val installed = withContext(Dispatchers.IO) { ModelManager.listInstalled(ctx) }
+                if (installed.isEmpty()) {
+                    _state.update {
+                        it.copy(errorMessage = "No models installed. Download or import a model first.")
+                    }
+                    return@launch
+                }
+                _state.update {
+                    it.copy(
+                        running = true,
+                        progress = 0f,
+                        currentLabel = "Decoding audio…",
+                        errorMessage = null,
+                        results = emptyList()
+                    )
+                }
                 val pcm = AudioDecoder.decodeToPcmWithFallback(ctx, uri)
                 val results = Benchmark.run(
                     context = ctx,
@@ -84,24 +97,32 @@ class BenchmarkViewModel(app: android.app.Application) : AndroidViewModel(app) {
                     includeGpu = true,
                     threads = prefs.resolvedThreads()
                 ) { current, total, label ->
-                    _state.value = _state.value.copy(
-                        progress = if (total == 0) null else current.toFloat() / total,
-                        currentLabel = label.ifBlank { null }
+                    _state.update {
+                        it.copy(
+                            progress = if (total == 0) null else current.toFloat() / total,
+                            currentLabel = label.ifBlank { null }
+                        )
+                    }
+                }
+                _state.update {
+                    it.copy(
+                        running = false,
+                        progress = null,
+                        currentLabel = null,
+                        results = results
                     )
                 }
-                _state.value = _state.value.copy(
-                    running = false,
-                    progress = null,
-                    currentLabel = null,
-                    results = results
-                )
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (t: Throwable) {
-                _state.value = _state.value.copy(
-                    running = false,
-                    progress = null,
-                    currentLabel = null,
-                    errorMessage = t.message ?: t.javaClass.simpleName
-                )
+                _state.update {
+                    it.copy(
+                        running = false,
+                        progress = null,
+                        currentLabel = null,
+                        errorMessage = t.message ?: t.javaClass.simpleName
+                    )
+                }
             }
         }
     }

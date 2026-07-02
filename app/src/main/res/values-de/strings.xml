@@ -59,4 +59,7 @@
     <string name="benchmark_pick_audio">Audio wählen &amp; starten</string>
     <string name="benchmark_running">Läuft…</string>
     <string name="benchmark_results_header">Ergebnisse</string>
+
+    <!-- Transcribe screen -->
+    <string name="cancel_transcription">Transkription abbrechen</string>
 </resources>
