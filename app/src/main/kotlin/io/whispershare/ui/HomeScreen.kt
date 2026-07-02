@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FileUpload
@@ -28,7 +29,7 @@ import kotlinx.coroutines.delay
 data class HomeUiState(
     val entries: List<ModelManager.ModelEntry>,
     val installed: Set<String>,
-    val downloading: Map<String, Int>,
+    val downloading: Map<String, ModelManager.DownloadProgress>,
     val selectedId: String,
     val useGpu: Boolean,
     val language: String,
@@ -46,6 +47,7 @@ fun HomeScreen(
     state: HomeUiState,
     onSelectModel: (String) -> Unit,
     onDownload: (String) -> Unit,
+    onCancelDownload: (String) -> Unit,
     onDelete: (String) -> Unit,
     onImportModel: (Uri, String, Boolean) -> Unit,
     onToggleGpu: (Boolean) -> Unit,
@@ -85,6 +87,26 @@ fun HomeScreen(
         )
     }
 
+    var pendingDelete by remember { mutableStateOf<ModelManager.ModelEntry?>(null) }
+    pendingDelete?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(stringResource(R.string.delete_dialog_title)) },
+            text = { Text(stringResource(R.string.delete_dialog_message, entry.displayName)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDelete(entry.id)
+                        pendingDelete = null
+                    }
+                ) { Text(stringResource(R.string.delete_dialog_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.cancel)) }
+            }
+        )
+    }
+
     Scaffold(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.app_name)) }) }
     ) { padding ->
@@ -114,7 +136,8 @@ fun HomeScreen(
                     isDownloadable = entry is ModelManager.BuiltInModel,
                     onSelect = { onSelectModel(entry.id) },
                     onDownload = { onDownload(entry.id) },
-                    onDelete = { onDelete(entry.id) }
+                    onCancelDownload = { onCancelDownload(entry.id) },
+                    onDelete = { pendingDelete = entry }
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -329,11 +352,12 @@ private fun ModelRow(
     subtitle: String,
     selected: Boolean,
     installed: Boolean,
-    progress: Int?,
+    progress: ModelManager.DownloadProgress?,
     isCustom: Boolean,
     isDownloadable: Boolean,
     onSelect: () -> Unit,
     onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
     onDelete: () -> Unit
 ) {
     Surface(
@@ -356,20 +380,36 @@ private fun ModelRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (progress != null) {
-                    Spacer(Modifier.height(6.dp))
-                    LinearProgressIndicator(
-                        progress = { progress / 100f },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text("$progress%", style = MaterialTheme.typography.bodySmall)
+                when (progress) {
+                    is ModelManager.DownloadProgress.Percent -> {
+                        Spacer(Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { progress.percent / 100f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("${progress.percent}%", style = MaterialTheme.typography.bodySmall)
+                    }
+                    is ModelManager.DownloadProgress.DownloadedMb -> {
+                        Spacer(Modifier.height(6.dp))
+                        // Total size unknown (chunked response) — indeterminate bar + MB counter.
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text(
+                            stringResource(R.string.download_progress_mb, progress.mb),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    null -> {}
                 }
             }
             if (installed || isCustom) {
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.delete_cd))
                 }
-            } else if (progress == null && isDownloadable) {
+            } else if (progress != null) {
+                IconButton(onClick = onCancelDownload) {
+                    Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.cancel_download_cd))
+                }
+            } else if (isDownloadable) {
                 IconButton(onClick = onDownload) {
                     Icon(Icons.Outlined.CloudDownload, contentDescription = stringResource(R.string.download_cd))
                 }

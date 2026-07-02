@@ -14,11 +14,16 @@ import androidx.lifecycle.viewModelScope
 import io.whispershare.ui.HomeScreen
 import io.whispershare.ui.HomeUiState
 import io.whispershare.ui.theme.WhisperShareTheme
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -36,6 +41,7 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     onSelectModel = vm::selectModel,
                     onDownload = vm::download,
+                    onCancelDownload = vm::cancelDownload,
                     onDelete = vm::delete,
                     onImportModel = vm::importModel,
                     onToggleGpu = vm::toggleGpu,
@@ -60,70 +66,90 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(initial())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
 
-    private fun initial(): HomeUiState {
-        val ctx = getApplication<android.app.Application>()
-        val entries = ModelManager.listAll(ctx)
-        return HomeUiState(
-            entries = entries,
-            installed = entries.filter { ModelManager.isDownloaded(ctx, it) }.map { it.id }.toSet(),
-            downloading = emptyMap(),
-            selectedId = prefs.selectedModelId,
-            useGpu = prefs.useGpu,
-            language = prefs.language,
-            translateToEnglish = prefs.translateToEnglish,
-            threads = prefs.threads,
-            highQuality = prefs.highQuality,
-            developerMode = prefs.developerMode,
-            skipModelVerification = prefs.skipModelVerification
-        )
-    }
+    /** In-flight downloads by model id. Guarded by main-thread confinement. */
+    private val downloadJobs = mutableMapOf<String, Job>()
+
+    /** Preference-only snapshot; the model list is filled in by [refresh] off-main. */
+    private fun initial(): HomeUiState = HomeUiState(
+        entries = emptyList(),
+        installed = emptySet(),
+        downloading = emptyMap(),
+        selectedId = prefs.selectedModelId,
+        useGpu = prefs.useGpu,
+        language = prefs.language,
+        translateToEnglish = prefs.translateToEnglish,
+        threads = prefs.threads,
+        highQuality = prefs.highQuality,
+        developerMode = prefs.developerMode,
+        skipModelVerification = prefs.skipModelVerification
+    )
 
     fun refresh() {
+        viewModelScope.launch { refreshInternal() }
+    }
+
+    private suspend fun refreshInternal() {
         val ctx = getApplication<android.app.Application>()
-        val entries = ModelManager.listAll(ctx)
-        _state.update {
-            it.copy(
-                entries = entries,
-                installed = entries.filter { e -> ModelManager.isDownloaded(ctx, e) }.map { e -> e.id }.toSet()
-            )
+        val (entries, installed) = withContext(Dispatchers.IO) {
+            val all = ModelManager.listAll(ctx)
+            all to all.filter { ModelManager.isDownloaded(ctx, it) }.map { it.id }.toSet()
         }
+        _state.update { it.copy(entries = entries, installed = installed) }
     }
 
     fun selectModel(id: String) {
         val ctx = getApplication<android.app.Application>()
-        if (ModelManager.entryById(ctx, id) == null) return
-        prefs.selectedModelId = id
-        _state.update { it.copy(selectedId = id) }
-    }
-
-    fun download(id: String) {
-        val model = ModelManager.entryById(getApplication(), id) as? ModelManager.BuiltInModel ?: return
-        val ctx = getApplication<android.app.Application>()
         viewModelScope.launch {
-            try {
-                ModelManager.download(ctx, model, verify = !prefs.skipModelVerification).collect { pct ->
-                    _state.update { s ->
-                        val map = s.downloading.toMutableMap()
-                        if (pct < 0) map.remove(id) else map[id] = pct
-                        s.copy(downloading = map)
-                    }
-                }
-            } catch (t: Throwable) {
-                _state.update { s ->
-                    val map = s.downloading.toMutableMap()
-                    map.remove(id)
-                    s.copy(downloading = map, errorMessage = t.message)
-                }
-            } finally {
-                refresh()
-            }
+            val known = withContext(Dispatchers.IO) { ModelManager.entryById(ctx, id) != null }
+            if (!known) return@launch
+            prefs.selectedModelId = id
+            _state.update { it.copy(selectedId = id) }
         }
     }
 
+    fun download(id: String) {
+        // Dedup: a second tap while a download is in flight is ignored
+        // (interleaved writers would corrupt the shared .part file).
+        if (downloadJobs.containsKey(id)) return
+        val ctx = getApplication<android.app.Application>()
+        val job = viewModelScope.launch {
+            try {
+                val model = withContext(Dispatchers.IO) {
+                    ModelManager.entryById(ctx, id)
+                } as? ModelManager.BuiltInModel ?: return@launch
+                ModelManager.download(ctx, model, verify = !prefs.skipModelVerification)
+                    .collect { progress ->
+                        _state.update { s -> s.copy(downloading = s.downloading + (id to progress)) }
+                    }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                _state.update { s -> s.copy(errorMessage = t.message) }
+            } finally {
+                downloadJobs.remove(id)
+                withContext(NonCancellable) {
+                    _state.update { s -> s.copy(downloading = s.downloading - id) }
+                    refreshInternal()
+                }
+            }
+        }
+        downloadJobs[id] = job
+    }
+
+    fun cancelDownload(id: String) {
+        // ModelManager.download's finally block removes the .part file.
+        downloadJobs[id]?.cancel()
+    }
+
     fun delete(id: String) {
-        val entry = ModelManager.entryById(getApplication(), id) ?: return
-        ModelManager.delete(getApplication(), entry)
-        refresh()
+        val ctx = getApplication<android.app.Application>()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val entry = ModelManager.entryById(ctx, id) ?: return@withContext
+                ModelManager.delete(ctx, entry)
+            }
+            refreshInternal()
+        }
     }
 
     fun importModel(uri: Uri, displayName: String, multilingual: Boolean) {

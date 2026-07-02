@@ -60,4 +60,12 @@
     <string name="benchmark_pick_audio">Pick audio &amp; run</string>
     <string name="benchmark_running">Running…</string>
     <string name="benchmark_results_header">Results</string>
+
+    <!-- Model management (W1-D) -->
+    <string name="import_error_not_ggml">Not a whisper.cpp GGML model — the file doesn\'t start with the \"ggml\" magic bytes.</string>
+    <string name="download_progress_mb">%1$d MB downloaded</string>
+    <string name="cancel_download_cd">Cancel download</string>
+    <string name="delete_dialog_title">Delete model?</string>
+    <string name="delete_dialog_message">Delete “%1$s” from this device? You can download or import it again later.</string>
+    <string name="delete_dialog_confirm">Delete</string>
 </resources>
