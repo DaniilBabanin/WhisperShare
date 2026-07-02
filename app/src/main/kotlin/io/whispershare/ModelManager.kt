@@ -3,6 +3,7 @@ package io.whispershare
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -33,6 +34,13 @@ object ModelManager {
     private const val HF_BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
     private const val MANIFEST_FILE = "custom_models.json"
     private const val CUSTOM_PREFIX = "custom_"
+
+    /**
+     * GGML_FILE_MAGIC from whisper.cpp v1.8.4 (ggml/include/ggml.h): 0x67676d6c, "ggml".
+     * whisper_model_load reads it as a little-endian uint32, so the file starts with
+     * the bytes 6c 6d 67 67 on disk.
+     */
+    private const val GGML_FILE_MAGIC = 0x67676d6c
 
     // ---------- public types ----------
 
@@ -94,6 +102,15 @@ object ModelManager {
         override val id: String get() = "custom:$filename"
     }
 
+    /** Progress of a model download. */
+    sealed interface DownloadProgress {
+        /** Total size known: 0..100. */
+        data class Percent(val percent: Int) : DownloadProgress
+
+        /** Total size unknown (chunked response): megabytes received so far. */
+        data class DownloadedMb(val mb: Int) : DownloadProgress
+    }
+
     /** For UI: keep BuiltIn maintained in source order, then customs. */
     fun listAll(context: Context): List<ModelEntry> =
         BuiltInModel.entries.toList<ModelEntry>() + readCustomManifest(context)
@@ -118,10 +135,12 @@ object ModelManager {
     // ---------- download (built-ins only) ----------
 
     /**
-     * Emits 0..100 then -1 to signal completion. SHA-256 verified on success
-     * unless [verify] is false (developer escape hatch).
+     * Emits [DownloadProgress] until the flow completes. Percent when the server
+     * reports a Content-Length, downloaded megabytes otherwise (chunked responses).
+     * SHA-256 verified on success unless [verify] is false (developer escape hatch).
+     * Cancelling the collector aborts the transfer and removes the .part file.
      */
-    fun download(context: Context, model: BuiltInModel, verify: Boolean = true): Flow<Int> = flow {
+    fun download(context: Context, model: BuiltInModel, verify: Boolean = true): Flow<DownloadProgress> = flow {
         val target = fileFor(context, model)
         val tmp = File(target.absolutePath + ".part")
         val url = URL(model.downloadUrl())
@@ -152,7 +171,13 @@ object ModelManager {
                             val pct = ((downloaded * 100) / total).toInt().coerceIn(0, 99)
                             if (pct != lastEmitted) {
                                 lastEmitted = pct
-                                emit(pct)
+                                emit(DownloadProgress.Percent(pct))
+                            }
+                        } else {
+                            val mb = (downloaded / 1_000_000).toInt()
+                            if (mb != lastEmitted) {
+                                lastEmitted = mb
+                                emit(DownloadProgress.DownloadedMb(mb))
                             }
                         }
                     }
@@ -176,10 +201,10 @@ object ModelManager {
                 tmp.copyTo(target, overwrite = true)
                 tmp.delete()
             }
-            emit(100)
-            emit(-1)
+            emit(DownloadProgress.Percent(100))
         } finally {
             conn.disconnect()
+            // Runs on failure *and* cancellation: never leave a stale .part behind.
             if (tmp.exists()) tmp.delete()
         }
     }.flowOn(Dispatchers.IO)
@@ -218,6 +243,15 @@ object ModelManager {
                 )
             }
 
+            // whisper.cpp's model parser is not hardened — refuse anything that
+            // doesn't carry the GGML magic before it can ever reach native code.
+            if (!hasGgmlMagic(tmp)) {
+                tmp.delete()
+                return@withContext Result.failure(
+                    IllegalStateException(context.getString(R.string.import_error_not_ggml))
+                )
+            }
+
             if (!tmp.renameTo(target)) {
                 tmp.copyTo(target, overwrite = true)
                 tmp.delete()
@@ -232,10 +266,30 @@ object ModelManager {
             addToManifest(context, entry)
             Log.i(TAG, "Imported custom model: ${entry.filename} (${entry.approxSizeMb} MB)")
             Result.success(entry)
+        } catch (e: CancellationException) {
+            throw e
         } catch (t: Throwable) {
             Log.w(TAG, "Custom import failed", t)
             Result.failure(t)
         }
+    }
+
+    /** True if the file starts with GGML_FILE_MAGIC ("ggml", little-endian on disk). */
+    private fun hasGgmlMagic(file: File): Boolean {
+        val header = ByteArray(4)
+        FileInputStream(file).use { input ->
+            var read = 0
+            while (read < header.size) {
+                val n = input.read(header, read, header.size - read)
+                if (n <= 0) return false
+                read += n
+            }
+        }
+        val magic = (header[0].toInt() and 0xFF) or
+            ((header[1].toInt() and 0xFF) shl 8) or
+            ((header[2].toInt() and 0xFF) shl 16) or
+            ((header[3].toInt() and 0xFF) shl 24)
+        return magic == GGML_FILE_MAGIC
     }
 
     // ---------- manifest helpers ----------

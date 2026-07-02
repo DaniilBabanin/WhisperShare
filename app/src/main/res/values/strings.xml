@@ -63,4 +63,11 @@
 
     <!-- Transcribe screen -->
     <string name="cancel_transcription">Cancel transcription</string>
+    <!-- Model management (W1-D) -->
+    <string name="import_error_not_ggml">Not a whisper.cpp GGML model — the file doesn\'t start with the \"ggml\" magic bytes.</string>
+    <string name="download_progress_mb">%1$d MB downloaded</string>
+    <string name="cancel_download_cd">Cancel download</string>
+    <string name="delete_dialog_title">Delete model?</string>
+    <string name="delete_dialog_message">Delete “%1$s” from this device? You can download or import it again later.</string>
+    <string name="delete_dialog_confirm">Delete</string>
 </resources>

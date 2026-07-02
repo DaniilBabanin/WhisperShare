@@ -62,4 +62,11 @@
 
     <!-- Transcribe screen -->
     <string name="cancel_transcription">Transkription abbrechen</string>
+    <!-- Model management (W1-D) -->
+    <string name="import_error_not_ggml">Keine whisper.cpp-GGML-Modelldatei — die Datei beginnt nicht mit den \"ggml\"-Magic-Bytes.</string>
+    <string name="download_progress_mb">%1$d MB heruntergeladen</string>
+    <string name="cancel_download_cd">Download abbrechen</string>
+    <string name="delete_dialog_title">Modell löschen?</string>
+    <string name="delete_dialog_message">„%1$s“ von diesem Gerät löschen? Du kannst es später erneut herunterladen oder importieren.</string>
+    <string name="delete_dialog_confirm">Löschen</string>
 </resources>
