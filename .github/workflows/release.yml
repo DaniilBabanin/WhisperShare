@@ -51,11 +51,12 @@ jobs:
           cp app/build/outputs/bundle/release/app-release.aab WhisperShare.aab
           ls -lh WhisperShare.apk WhisperShare.aab
 
-      # Assert the signed APK's certificate fingerprint matches the value pinned
-      # in tools/release/expected-signing-cert.sha256. Any keystore swap
-      # (accidental or otherwise) fails the release here — and this is the same
-      # SHA-256 Obtainium pins for signature verification.
-      - name: Verify APK signing-cert fingerprint
+      # Assert the signed APK's and AAB's certificate fingerprints match the
+      # value pinned in tools/release/expected-signing-cert.sha256. Any keystore
+      # swap (accidental or otherwise) fails the release here — and this is the
+      # same SHA-256 Obtainium pins for signature verification.
+      - name: Verify signing-cert fingerprints
+        id: signing_cert
         run: |
           set -euo pipefail
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/35.0.0)
@@ -66,8 +67,8 @@ jobs:
           fi
           ACTUAL="$("$BUILD_TOOLS/apksigner" verify --print-certs WhisperShare.apk \
             | awk -F': ' '/certificate SHA-256 digest/ {print tolower($2); exit}' | tr -d ' ')"
-          echo "expected: $EXPECTED"
-          echo "actual:   $ACTUAL"
+          echo "expected:   $EXPECTED"
+          echo "APK actual: $ACTUAL"
           if [ -z "$ACTUAL" ]; then
             echo "::error::could not extract signer cert SHA-256 from WhisperShare.apk"
             "$BUILD_TOOLS/apksigner" verify --print-certs WhisperShare.apk || true
@@ -79,7 +80,21 @@ jobs:
           fi
           "$BUILD_TOOLS/apksigner" verify --verbose WhisperShare.apk
           jarsigner -verify WhisperShare.aab
-          echo "signing-cert fingerprint OK"
+          AAB_ACTUAL="$(keytool -printcert -jarfile WhisperShare.aab \
+            | awk -F'SHA256: ' '/SHA256:/ {print $2; exit}' \
+            | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          echo "AAB actual: $AAB_ACTUAL"
+          if [ -z "$AAB_ACTUAL" ]; then
+            echo "::error::could not extract signer cert SHA-256 from WhisperShare.aab"
+            keytool -printcert -jarfile WhisperShare.aab || true
+            exit 1
+          fi
+          if [ "$EXPECTED" != "$AAB_ACTUAL" ]; then
+            echo "::error::AAB signing-cert SHA-256 mismatch — refusing to publish"
+            exit 1
+          fi
+          echo "fingerprint=$EXPECTED" >> "$GITHUB_OUTPUT"
+          echo "signing-cert fingerprints OK"
 
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v2
@@ -97,7 +112,7 @@ jobs:
             guarantee every update is signed by the same key:
 
             ```
-            1601abb6092cc3cc58ee2237995eabc60c59688d107caabb36a4a7e6bf8b1251
+            ${{ steps.signing_cert.outputs.fingerprint }}
             ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

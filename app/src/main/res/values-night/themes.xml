@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode counterpart of values/themes.xml so the window background
+         drawn before Compose takes over doesn't flash white in dark mode. -->
+    <style name="Theme.WhisperShare" parent="android:Theme.Material.NoActionBar" />
+</resources>
