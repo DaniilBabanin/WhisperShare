@@ -82,6 +82,13 @@ object ModelManager {
             190, true,
             "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
         ),
+        LARGE_V3_TURBO_Q5(
+            "Large v3 Turbo (multilingual, most accurate, high RAM use)",
+            "ggml-large-v3-turbo-q5_0.bin",
+            "ggml-large-v3-turbo-q5_0.bin",
+            574, true,
+            "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+        ),
         BASE_EN_Q5(
             "Base English-only (faster)",
             "ggml-base.en-q5_1.bin",
