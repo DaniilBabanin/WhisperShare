@@ -14,7 +14,7 @@ object ShareUtils {
         cm.setPrimaryClip(ClipData.newPlainText("transcription", text))
         // Android 13+ shows its own clipboard toast — don't double up.
         if (Build.VERSION.SDK_INT < 33) {
-            Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.copied_toast), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -23,7 +23,7 @@ object ShareUtils {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        context.startActivity(Intent.createChooser(send, "Share transcription").apply {
+        context.startActivity(Intent.createChooser(send, context.getString(R.string.share_chooser_title)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         })
     }

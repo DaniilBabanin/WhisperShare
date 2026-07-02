@@ -158,7 +158,9 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
             ModelManager.importFromUri(ctx, uri, displayName, multilingual)
                 .onSuccess { refresh() }
                 .onFailure { t ->
-                    _state.update { it.copy(errorMessage = "Import failed: ${t.message}") }
+                    _state.update {
+                        it.copy(errorMessage = ctx.getString(R.string.import_failed, t.message ?: ""))
+                    }
                 }
         }
     }

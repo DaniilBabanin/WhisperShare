@@ -41,7 +41,7 @@ class TranscribeActivity : ComponentActivity() {
             setContent {
                 WhisperShareTheme {
                     TranscribeScreen(
-                        state = TranscribeUiState.Error("No audio file received."),
+                        state = TranscribeUiState.Error(getString(R.string.error_no_audio)),
                         onClose = { finish() },
                         onCopy = { _ -> },
                         onShare = { _ -> },
@@ -104,10 +104,13 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
 
     private var job: Job? = null
 
+    private fun str(resId: Int, vararg args: Any): String =
+        getApplication<android.app.Application>().getString(resId, *args)
+
     fun cancel() {
         job?.cancel()
         job = null
-        _state.value = TranscribeUiState.Error("Transcription cancelled.")
+        _state.value = TranscribeUiState.Error(str(R.string.transcription_cancelled))
     }
 
     fun start(uri: Uri) {
@@ -119,22 +122,20 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
             val self = coroutineContext.job
             var crumb: File? = null
             try {
-                _state.value = TranscribeUiState.Stage(stage = "Loading model…", progress = null)
+                _state.value = TranscribeUiState.Stage(stage = str(R.string.stage_loading_model), progress = null)
 
                 val ctx = getApplication<android.app.Application>()
                 val entry = withContext(Dispatchers.IO) {
                     ModelManager.entryById(ctx, prefs.selectedModelId)
                 }
                 if (entry == null) {
-                    _state.value = TranscribeUiState.Error(
-                        "Selected model is no longer available. Open WhisperShare to pick another."
-                    )
+                    _state.value = TranscribeUiState.Error(str(R.string.error_model_unavailable))
                     return@launch
                 }
                 val modelFile = ModelManager.fileFor(ctx, entry)
                 if (!withContext(Dispatchers.IO) { modelFile.exists() }) {
                     _state.value = TranscribeUiState.Error(
-                        "Model '${entry.displayName}' is not downloaded. Open WhisperShare to download it first."
+                        str(R.string.error_model_not_downloaded, entry.displayName)
                     )
                     return@launch
                 }
@@ -145,7 +146,7 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                 // Pick up a one-shot notice from a previous-run GPU crash.
                 if (prefs.gpuCrashedNotice) {
                     prefs.gpuCrashedNotice = false
-                    notice = "Last GPU run crashed on this device — switched to CPU."
+                    notice = str(R.string.notice_gpu_crash_previous)
                 }
 
                 val loadResult = WhisperEngine.load(modelFile, useGpu = useGpu)
@@ -153,26 +154,26 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                     // GPU init blew up (e.g. Mali driver) — fall back to CPU and remember it.
                     prefs.useGpu = false
                     useGpu = false
-                    notice = "GPU init failed on this device — switched to CPU."
+                    notice = str(R.string.notice_gpu_init_failed)
                     WhisperEngine.load(modelFile, useGpu = false)
                         .getOrElse {
-                            _state.value = TranscribeUiState.Error("Failed to load model: ${it.message}")
+                            _state.value = TranscribeUiState.Error(str(R.string.error_load_model, it.message ?: ""))
                             return@launch
                         }
                 } else if (loadResult.isFailure) {
                     _state.value = TranscribeUiState.Error(
-                        "Failed to load model: ${loadResult.exceptionOrNull()?.message}"
+                        str(R.string.error_load_model, loadResult.exceptionOrNull()?.message ?: "")
                     )
                     return@launch
                 }
 
-                _state.value = TranscribeUiState.Stage("Decoding audio…", null)
+                _state.value = TranscribeUiState.Stage(str(R.string.stage_decoding_audio), null)
                 val pcm = AudioDecoder.decodeToPcmWithFallback(ctx, uri)
                 val durationSec = pcm.size / 16_000.0
 
                 suspend fun runOnce(): String {
                     _state.value = TranscribeUiState.Stage(
-                        "Transcribing %.1fs of audio…".format(durationSec),
+                        str(R.string.transcribe_progress_duration, durationSec),
                         0f
                     )
                     val builder = StringBuilder()
@@ -233,10 +234,10 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                     // Native error mid-transcribe — most likely vk::DeviceLostError. Force CPU and retry.
                     prefs.useGpu = false
                     useGpu = false
-                    notice = "GPU error: $errorNow. Switched to CPU."
+                    notice = str(R.string.notice_gpu_error_switched, errorNow)
                     WhisperEngine.release()
                     WhisperEngine.load(modelFile, useGpu = false).getOrElse {
-                        _state.value = TranscribeUiState.Error("Failed to reload on CPU: ${it.message}")
+                        _state.value = TranscribeUiState.Error(str(R.string.error_reload_cpu, it.message ?: ""))
                         return@launch
                     }
                     text = runOnce()
@@ -244,7 +245,7 @@ class TranscribeViewModel(application: android.app.Application) : androidx.lifec
                 val ms = System.currentTimeMillis() - started
 
                 _state.value = TranscribeUiState.Done(
-                    text = listOfNotNull(notice, text.ifBlank { "(no speech detected)" })
+                    text = listOfNotNull(notice, text.ifBlank { str(R.string.no_speech_detected) })
                         .joinToString("\n\n"),
                     durationSec = durationSec,
                     elapsedMs = ms,

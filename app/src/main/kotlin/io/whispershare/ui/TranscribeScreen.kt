@@ -40,10 +40,10 @@ fun TranscribeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Transcription") },
+                title = { Text(stringResource(R.string.transcribe_title)) },
                 navigationIcon = {
                     IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.Close, contentDescription = "Close")
+                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.close_cd))
                     }
                 }
             )
@@ -60,7 +60,7 @@ fun TranscribeScreen(
                     Spacer(Modifier.height(24.dp))
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(12.dp))
-                    Text("Starting…", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.transcribe_starting), style = MaterialTheme.typography.bodyMedium)
                 }
 
                 is TranscribeUiState.Stage -> {
@@ -96,9 +96,9 @@ fun TranscribeScreen(
                     Spacer(Modifier.height(8.dp))
                     Text(
                         if (state.progress != null)
-                            "Transcribing ${"%.0f".format(state.progress * 100)}% of ${"%.1f".format(state.durationSec)}s"
+                            stringResource(R.string.transcribe_progress_percent, state.progress * 100, state.durationSec)
                         else
-                            "Transcribing ${"%.1f".format(state.durationSec)}s of audio…",
+                            stringResource(R.string.transcribe_progress_duration, state.durationSec),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -139,14 +139,15 @@ fun TranscribeScreen(
                         AssistChip(
                             onClick = {},
                             enabled = false,
-                            label = { Text("backend: ${state.backend}") }
+                            label = { Text(stringResource(R.string.backend_chip, state.backend)) }
                         )
                         Spacer(Modifier.width(8.dp))
                         AssistChip(
                             onClick = {},
                             enabled = false,
                             label = {
-                                Text("%.1fs in %.1fs (%.1fx rt)".format(
+                                Text(stringResource(
+                                    R.string.timing_chip,
                                     state.durationSec,
                                     state.elapsedMs / 1000.0,
                                     state.durationSec / (state.elapsedMs / 1000.0).coerceAtLeast(0.001)
@@ -182,7 +183,7 @@ fun TranscribeScreen(
                         ) {
                             Icon(Icons.Outlined.ContentCopy, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Copy")
+                            Text(stringResource(R.string.copy_button))
                         }
                         Spacer(Modifier.width(8.dp))
                         Button(
@@ -191,7 +192,7 @@ fun TranscribeScreen(
                         ) {
                             Icon(Icons.Outlined.IosShare, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Share")
+                            Text(stringResource(R.string.share_button))
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -200,7 +201,7 @@ fun TranscribeScreen(
                 is TranscribeUiState.Error -> {
                     Spacer(Modifier.height(24.dp))
                     Text(
-                        "Something went wrong",
+                        stringResource(R.string.error_generic_title),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -215,7 +216,7 @@ fun TranscribeScreen(
                         OutlinedButton(onClick = onRetry) {
                             Icon(Icons.Outlined.Refresh, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Retry")
+                            Text(stringResource(R.string.retry_button))
                         }
                     }
                 }

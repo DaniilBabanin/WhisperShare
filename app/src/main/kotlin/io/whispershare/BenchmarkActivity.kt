@@ -76,7 +76,7 @@ class BenchmarkViewModel(app: android.app.Application) : AndroidViewModel(app) {
                 val installed = withContext(Dispatchers.IO) { ModelManager.listInstalled(ctx) }
                 if (installed.isEmpty()) {
                     _state.update {
-                        it.copy(errorMessage = "No models installed. Download or import a model first.")
+                        it.copy(errorMessage = ctx.getString(R.string.benchmark_no_models))
                     }
                     return@launch
                 }
@@ -84,7 +84,7 @@ class BenchmarkViewModel(app: android.app.Application) : AndroidViewModel(app) {
                     it.copy(
                         running = true,
                         progress = 0f,
-                        currentLabel = "Decoding audio…",
+                        currentLabel = ctx.getString(R.string.stage_decoding_audio),
                         errorMessage = null,
                         results = emptyList()
                     )

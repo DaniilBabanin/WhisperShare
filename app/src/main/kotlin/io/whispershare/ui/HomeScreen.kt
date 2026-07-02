@@ -328,10 +328,13 @@ fun HomeScreen(
     }
 }
 
+@Composable
 private fun buildSubtitle(entry: ModelManager.ModelEntry): String {
-    val size = if (entry.approxSizeMb > 0) "${entry.approxSizeMb} MB" else "unknown size"
-    val lang = if (entry.multilingual) "100+ languages" else "English only"
-    val origin = if (entry is ModelManager.CustomModel) " · imported" else ""
+    val size = if (entry.approxSizeMb > 0) stringResource(R.string.model_size_mb, entry.approxSizeMb)
+        else stringResource(R.string.model_size_unknown)
+    val lang = if (entry.multilingual) stringResource(R.string.model_langs_multilingual)
+        else stringResource(R.string.model_langs_english_only)
+    val origin = if (entry is ModelManager.CustomModel) " · ${stringResource(R.string.model_origin_imported)}" else ""
     return "$size · $lang$origin"
 }
 
@@ -453,9 +456,10 @@ private fun ImportModelDialog(
             }
         },
         confirmButton = {
+            val defaultName = stringResource(R.string.import_default_name)
             TextButton(
                 onClick = {
-                    val final = name.ifBlank { "imported model" }
+                    val final = name.ifBlank { defaultName }
                     onConfirm(final, multilingual)
                 }
             ) { Text(stringResource(R.string.import_dialog_confirm)) }

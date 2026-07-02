@@ -63,6 +63,49 @@
 
     <!-- Transcribe screen -->
     <string name="cancel_transcription">Cancel transcription</string>
+    <string name="transcribe_title">Transcription</string>
+    <string name="close_cd">Close</string>
+    <string name="transcribe_starting">Starting…</string>
+    <string name="transcribe_progress_percent">Transcribing %1$.0f%% of %2$.1fs</string>
+    <string name="transcribe_progress_duration">Transcribing %1$.1fs of audio…</string>
+    <string name="backend_chip">backend: %1$s</string>
+    <string name="timing_chip">%1$.1fs in %2$.1fs (%3$.1fx rt)</string>
+    <string name="copy_button">Copy</string>
+    <string name="share_button">Share</string>
+    <string name="error_generic_title">Something went wrong</string>
+    <string name="retry_button">Retry</string>
+
+    <!-- Transcribe pipeline (ViewModel) -->
+    <string name="error_no_audio">No audio file received.</string>
+    <string name="transcription_cancelled">Transcription cancelled.</string>
+    <string name="stage_loading_model">Loading model…</string>
+    <string name="stage_decoding_audio">Decoding audio…</string>
+    <string name="error_model_unavailable">Selected model is no longer available. Open WhisperShare to pick another.</string>
+    <string name="error_model_not_downloaded">Model \'%1$s\' is not downloaded. Open WhisperShare to download it first.</string>
+    <string name="notice_gpu_crash_previous">Last GPU run crashed on this device — switched to CPU.</string>
+    <string name="notice_gpu_init_failed">GPU init failed on this device — switched to CPU.</string>
+    <string name="notice_gpu_error_switched">GPU error: %1$s. Switched to CPU.</string>
+    <string name="error_load_model">Failed to load model: %1$s</string>
+    <string name="error_reload_cpu">Failed to reload on CPU: %1$s</string>
+    <string name="no_speech_detected">(no speech detected)</string>
+
+    <!-- Model list subtitles -->
+    <string name="model_size_mb">%1$d MB</string>
+    <string name="model_size_unknown">unknown size</string>
+    <string name="model_langs_multilingual">100+ languages</string>
+    <string name="model_langs_english_only">English only</string>
+    <string name="model_origin_imported">imported</string>
+    <string name="import_default_name">imported model</string>
+    <string name="import_failed">Import failed: %1$s</string>
+
+    <!-- Benchmark results -->
+    <string name="benchmark_error_format">error: %1$s</string>
+    <string name="benchmark_timing">%1$.1fs in %2$.1fs</string>
+    <string name="benchmark_realtime">%1$.1fx rt</string>
+
+    <!-- Share / clipboard -->
+    <string name="copied_toast">Copied</string>
+    <string name="share_chooser_title">Share transcription</string>
     <!-- Model management (W1-D) -->
     <string name="import_error_not_ggml">Not a whisper.cpp GGML model — the file doesn\'t start with the \"ggml\" magic bytes.</string>
     <string name="download_progress_mb">%1$d MB downloaded</string>

@@ -47,7 +47,7 @@ fun BenchmarkScreen(
                 title = { Text(stringResource(R.string.benchmark_title)) },
                 navigationIcon = {
                     IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.Close, contentDescription = null)
+                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.close_cd))
                     }
                 }
             )
@@ -160,8 +160,8 @@ private fun BenchmarkRow(r: BenchmarkResult) {
             Column(Modifier.weight(1f)) {
                 Text(r.modelName, style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    if (r.error != null) "error: ${r.error}"
-                    else "%.1fs in %.1fs".format(r.durationSec, r.elapsedMs / 1000.0),
+                    if (r.error != null) stringResource(R.string.benchmark_error_format, r.error)
+                    else stringResource(R.string.benchmark_timing, r.durationSec, r.elapsedMs / 1000.0),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (r.error != null) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant
@@ -175,7 +175,7 @@ private fun BenchmarkRow(r: BenchmarkResult) {
                 )
                 if (r.error == null) {
                     Text(
-                        "%.1fx rt".format(r.realtimeFactor),
+                        stringResource(R.string.benchmark_realtime, r.realtimeFactor),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
