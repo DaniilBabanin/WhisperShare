@@ -112,4 +112,7 @@
     <string name="delete_dialog_title">Modell löschen?</string>
     <string name="delete_dialog_message">„%1$s“ von diesem Gerät löschen? Du kannst es später erneut herunterladen oder importieren.</string>
     <string name="delete_dialog_confirm">Löschen</string>
+
+    <!-- Home audio picker (W3-C) -->
+    <string name="transcribe_file_button">Audiodatei transkribieren</string>
 </resources>

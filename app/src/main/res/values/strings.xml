@@ -113,4 +113,7 @@
     <string name="delete_dialog_title">Delete model?</string>
     <string name="delete_dialog_message">Delete “%1$s” from this device? You can download or import it again later.</string>
     <string name="delete_dialog_confirm">Delete</string>
+
+    <!-- Home audio picker (W3-C) -->
+    <string name="transcribe_file_button">Transcribe audio file</string>
 </resources>
