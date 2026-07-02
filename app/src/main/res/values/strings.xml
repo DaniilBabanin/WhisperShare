@@ -113,4 +113,13 @@
     <string name="delete_dialog_title">Delete model?</string>
     <string name="delete_dialog_message">Delete “%1$s” from this device? You can download or import it again later.</string>
     <string name="delete_dialog_confirm">Delete</string>
+
+    <!-- Foreground transcription service (W3-A) -->
+    <string name="notification_channel_progress">Transcription progress</string>
+    <string name="notification_channel_result">Transcription results</string>
+    <string name="notification_transcribing_title">Transcribing audio…</string>
+    <string name="notification_progress_percent">%1$d%%</string>
+    <string name="notification_done_title">Transcription finished</string>
+    <string name="notification_error_title">Transcription failed</string>
+    <string name="error_result_gone">This transcription is no longer available. Share the audio again to re-run it.</string>
 </resources>

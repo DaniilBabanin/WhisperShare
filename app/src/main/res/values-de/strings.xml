@@ -112,4 +112,13 @@
     <string name="delete_dialog_title">Modell löschen?</string>
     <string name="delete_dialog_message">„%1$s“ von diesem Gerät löschen? Du kannst es später erneut herunterladen oder importieren.</string>
     <string name="delete_dialog_confirm">Löschen</string>
+
+    <!-- Foreground transcription service (W3-A) -->
+    <string name="notification_channel_progress">Transkriptionsfortschritt</string>
+    <string name="notification_channel_result">Transkriptionsergebnisse</string>
+    <string name="notification_transcribing_title">Audio wird transkribiert…</string>
+    <string name="notification_progress_percent">%1$d%%</string>
+    <string name="notification_done_title">Transkription abgeschlossen</string>
+    <string name="notification_error_title">Transkription fehlgeschlagen</string>
+    <string name="error_result_gone">Diese Transkription ist nicht mehr verfügbar. Teile die Audiodatei erneut, um sie neu zu transkribieren.</string>
 </resources>
