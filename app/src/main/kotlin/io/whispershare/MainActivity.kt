@@ -53,6 +53,14 @@ class MainActivity : ComponentActivity() {
                     onToggleSkipModelVerification = vm::toggleSkipModelVerification,
                     onOpenBenchmark = {
                         startActivity(Intent(this, BenchmarkActivity::class.java))
+                    },
+                    onTranscribeAudio = { uri ->
+                        val intent = Intent(this, TranscribeActivity::class.java).apply {
+                            action = Intent.ACTION_VIEW
+                            setDataAndType(uri, contentResolver.getType(uri) ?: "audio/*")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(intent)
                     }
                 )
             }

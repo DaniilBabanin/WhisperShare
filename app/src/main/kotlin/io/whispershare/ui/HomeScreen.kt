@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Delete
@@ -57,7 +58,8 @@ fun HomeScreen(
     onToggleHighQuality: (Boolean) -> Unit,
     onSetDeveloperMode: (Boolean) -> Unit,
     onToggleSkipModelVerification: (Boolean) -> Unit,
-    onOpenBenchmark: () -> Unit
+    onOpenBenchmark: () -> Unit,
+    onTranscribeAudio: (Uri) -> Unit
 ) {
     val maxThreads = remember { Runtime.getRuntime().availableProcessors().coerceAtLeast(2) }
     val context = LocalContext.current
@@ -75,6 +77,10 @@ fun HomeScreen(
     var pendingUri by remember { mutableStateOf<Uri?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) pendingUri = uri
+    }
+
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onTranscribeAudio(uri)
     }
 
     if (pendingUri != null) {
@@ -120,6 +126,18 @@ fun HomeScreen(
                 stringResource(R.string.home_intro),
                 style = MaterialTheme.typography.bodyMedium
             )
+
+            Spacer(Modifier.height(16.dp))
+
+            Button(
+                onClick = { audioPicker.launch(arrayOf("audio/*", "application/ogg")) },
+                enabled = state.installed.contains(state.selectedId),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Outlined.AudioFile, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.transcribe_file_button))
+            }
 
             Spacer(Modifier.height(20.dp))
             SectionHeader(stringResource(R.string.section_models))
