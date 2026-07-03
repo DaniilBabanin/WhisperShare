@@ -7,6 +7,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
@@ -33,13 +34,16 @@ sealed interface TranscribeUiState {
     /**
      * [detectedLanguage] is the auto-detected ISO-639-1 code ("de"); null when
      * the user picked a language explicitly or detection was unavailable.
+     * [savedToHistory] is true when this result was appended to the opt-in
+     * local transcript history.
      */
     data class Done(
         val text: String,
         val durationSec: Double,
         val elapsedMs: Long,
         val backend: String,
-        val detectedLanguage: String? = null
+        val detectedLanguage: String? = null,
+        val savedToHistory: Boolean = false
     ) : TranscribeUiState
     data class Error(val message: String) : TranscribeUiState
 }
@@ -52,7 +56,8 @@ fun TranscribeScreen(
     onCopy: (String) -> Unit,
     onShare: (String) -> Unit,
     onCancel: (() -> Unit)?,
-    onRetry: (() -> Unit)?
+    onRetry: (() -> Unit)?,
+    onOpenHistory: (() -> Unit)? = null
 ) {
     Scaffold(
         topBar = {
@@ -61,6 +66,18 @@ fun TranscribeScreen(
                 navigationIcon = {
                     IconButton(onClick = onClose) {
                         Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.close_cd))
+                    }
+                },
+                actions = {
+                    // History only makes sense when nothing is in flight.
+                    val showHistory = state is TranscribeUiState.Idle || state is TranscribeUiState.Done
+                    if (onOpenHistory != null && showHistory) {
+                        IconButton(onClick = onOpenHistory) {
+                            Icon(
+                                Icons.Outlined.History,
+                                contentDescription = stringResource(R.string.history_open_cd)
+                            )
+                        }
                     }
                 }
             )
@@ -199,6 +216,14 @@ fun TranscribeScreen(
                             onClick = {},
                             enabled = false,
                             label = { Text(stringResource(R.string.detected_language, languageName)) }
+                        )
+                    }
+                    if (state.savedToHistory) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.history_saved_indicator),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Spacer(Modifier.height(16.dp))

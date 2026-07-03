@@ -133,12 +133,15 @@ class TranscriptionService : Service() {
         currentFileLabel = null
         _state.value = TranscribeUiState.Stage(getString(R.string.stage_loading_model), progress = null)
         val job = scope.launch {
-            val finalState = try {
+            var finalState = try {
                 runPipeline(uris)
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
                 TranscribeUiState.Error(t.message ?: t.javaClass.simpleName)
+            }
+            if (finalState is TranscribeUiState.Done) {
+                finalState = saveToHistoryIfEnabled(uris, finalState)
             }
             _state.value = finalState
             when (finalState) {
@@ -371,6 +374,44 @@ class TranscriptionService : Service() {
             backend = WhisperEngine.activeBackend,
             detectedLanguage = detectedCodes.singleOrNull()
         )
+    }
+
+    /**
+     * Appends the finished run to the opt-in local history — a single entry
+     * even for batches, carrying the combined text. No-op when the user hasn't
+     * opted in (the default): nothing is ever written. Returns the state marked
+     * [TranscribeUiState.Done.savedToHistory] on success; a history I/O failure
+     * only logs — it must never sink a successful transcription.
+     */
+    private suspend fun saveToHistoryIfEnabled(
+        uris: List<Uri>,
+        done: TranscribeUiState.Done
+    ): TranscribeUiState.Done {
+        val ctx = applicationContext
+        return try {
+            withContext(Dispatchers.IO) {
+                if (!TranscriptHistory.isEnabled(ctx)) return@withContext done
+                val sourceName =
+                    if (uris.size > 1) getString(R.string.history_source_files, uris.size)
+                    else displayNameFor(ctx, uris.first())
+                        ?: getString(R.string.history_source_unknown)
+                TranscriptHistory.forApp(ctx).append(
+                    TranscriptHistory.Entry(
+                        timestamp = System.currentTimeMillis(),
+                        sourceName = sourceName,
+                        text = done.text,
+                        durationSec = done.durationSec,
+                        detectedLanguage = done.detectedLanguage
+                    )
+                )
+                done.copy(savedToHistory = true)
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to save transcript to history", t)
+            done
+        }
     }
 
     /** DISPLAY_NAME via ContentResolver; null when the provider doesn't offer one. */

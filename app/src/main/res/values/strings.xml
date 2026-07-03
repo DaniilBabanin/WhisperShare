@@ -133,4 +133,20 @@
 
     <!-- Detected language (W3-F) -->
     <string name="detected_language">Detected language: %1$s</string>
+
+    <!-- Transcript history (W3-H) -->
+    <string name="history_title">History</string>
+    <string name="history_open_cd">Open history</string>
+    <string name="history_back_cd">Back</string>
+    <string name="history_optin_title">Save transcripts to history</string>
+    <string name="history_optin_subtitle">Keeps the last 50 transcripts on this device only. Off by default.</string>
+    <string name="history_empty">No saved transcripts yet.</string>
+    <string name="history_saved_indicator">Saved to history</string>
+    <string name="history_clear_cd">Clear history</string>
+    <string name="history_clear_dialog_title">Clear history?</string>
+    <string name="history_clear_dialog_message">Delete all saved transcripts from this device? This cannot be undone.</string>
+    <string name="history_clear_confirm">Clear</string>
+    <string name="history_source_files">%1$d files</string>
+    <string name="history_source_unknown">Audio file</string>
+    <string name="history_entry_subtitle">%1$s · %2$.1fs</string>
 </resources>

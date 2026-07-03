@@ -12,8 +12,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.ViewModelProvider
+import io.whispershare.ui.HistoryScreen
 import io.whispershare.ui.TranscribeScreen
 import io.whispershare.ui.TranscribeUiState
 import io.whispershare.ui.theme.WhisperShareTheme
@@ -24,6 +28,9 @@ class TranscribeActivity : ComponentActivity() {
     private val vm: TranscribeViewModel by viewModels {
         ViewModelProvider.AndroidViewModelFactory.getInstance(application)
     }
+
+    /** Activity-level so [onNewIntent] (a new share) can pop back to the result. */
+    private var showHistory by mutableStateOf(false)
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* optional — service runs either way */ }
@@ -57,21 +64,33 @@ class TranscribeActivity : ComponentActivity() {
 
         setContent {
             WhisperShareTheme {
-                val state by vm.state.collectAsState()
-                // Opened from a notification after the process was recycled:
-                // the in-memory result is gone, say so instead of "Starting…".
-                val display =
-                    if (viewResultOnly && state is TranscribeUiState.Idle)
-                        TranscribeUiState.Error(stringResource(R.string.error_result_gone))
-                    else state
-                TranscribeScreen(
-                    state = display,
-                    onClose = { finish() },
-                    onCopy = { text -> ShareUtils.copy(this, text) },
-                    onShare = { text -> ShareUtils.share(this, text) },
-                    onCancel = { vm.cancel() },
-                    onRetry = uris.takeIf { it.isNotEmpty() }?.let { u -> { startTranscription(u) } }
-                )
+                if (showHistory) {
+                    HistoryScreen(
+                        history = remember { TranscriptHistory.forApp(applicationContext) },
+                        historyEnabled = TranscriptHistory.isEnabled(this),
+                        onHistoryEnabledChange = { TranscriptHistory.setEnabled(this, it) },
+                        onBack = { showHistory = false },
+                        onCopy = { text -> ShareUtils.copy(this, text) },
+                        onShare = { text -> ShareUtils.share(this, text) }
+                    )
+                } else {
+                    val state by vm.state.collectAsState()
+                    // Opened from a notification after the process was recycled:
+                    // the in-memory result is gone, say so instead of "Starting…".
+                    val display =
+                        if (viewResultOnly && state is TranscribeUiState.Idle)
+                            TranscribeUiState.Error(stringResource(R.string.error_result_gone))
+                        else state
+                    TranscribeScreen(
+                        state = display,
+                        onClose = { finish() },
+                        onCopy = { text -> ShareUtils.copy(this, text) },
+                        onShare = { text -> ShareUtils.share(this, text) },
+                        onCancel = { vm.cancel() },
+                        onRetry = uris.takeIf { it.isNotEmpty() }?.let { u -> { startTranscription(u) } },
+                        onOpenHistory = { showHistory = true }
+                    )
+                }
             }
         }
     }
@@ -79,7 +98,10 @@ class TranscribeActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        extractUris(intent).takeIf { it.isNotEmpty() }?.let { startTranscription(it) }
+        extractUris(intent).takeIf { it.isNotEmpty() }?.let {
+            showHistory = false
+            startTranscription(it)
+        }
     }
 
     private fun startTranscription(uris: List<Uri>) {
