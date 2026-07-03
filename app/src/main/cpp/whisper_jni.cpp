@@ -38,6 +38,12 @@ std::string get_last_error() {
 // start of each nativeTranscribe.
 std::atomic<bool> g_abort_requested{false};
 
+// Language id detected by the last *completed* transcription, -1 when
+// unavailable. Reset at the start of each nativeTranscribe (like the abort
+// flag), written after a successful whisper_full, read by
+// nativeDetectedLanguage — possibly from another thread, hence atomic.
+std::atomic<int> g_detected_lang_id{-1};
+
 struct CallbackCtx {
     JNIEnv  *env;
     jobject  callback;
@@ -156,8 +162,10 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         jboolean useBeam,
         jobject callback) {
 
-    // New transcription run: clear any stale abort request.
+    // New transcription run: clear any stale abort request and the
+    // detected language from the previous run.
     g_abort_requested.store(false, std::memory_order_relaxed);
+    g_detected_lang_id.store(-1, std::memory_order_relaxed);
 
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
     if (ctx == nullptr) {
@@ -249,6 +257,7 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         return env->NewStringUTF("");
     }
     set_last_error("");
+    g_detected_lang_id.store(whisper_full_lang_id(ctx), std::memory_order_relaxed);
 
     std::string out;
     int n_segments = whisper_full_n_segments(ctx);
@@ -278,6 +287,18 @@ Java_io_whispershare_WhisperEngine_nativeLastError(
         JNIEnv *env, jobject /*thiz*/) {
     std::string err = get_last_error();
     return env->NewStringUTF(err.c_str());
+}
+
+JNIEXPORT jstring JNICALL
+Java_io_whispershare_WhisperEngine_nativeDetectedLanguage(
+        JNIEnv *env, jobject /*thiz*/, jlong /*ctxPtr*/) {
+    // ISO-639-1 code ("de") of the language detected by the last completed
+    // transcription, "" when unavailable. whisper_lang_str is a static table
+    // lookup, so no context access is needed here.
+    int id = g_detected_lang_id.load(std::memory_order_relaxed);
+    if (id < 0) return env->NewStringUTF("");
+    const char *code = whisper_lang_str(id);
+    return env->NewStringUTF(code ? code : "");
 }
 
 JNIEXPORT void JNICALL

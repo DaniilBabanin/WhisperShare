@@ -130,4 +130,7 @@
     <string name="batch_separator">— %1$s —</string>
     <string name="batch_fallback_name">Audio %1$d</string>
     <string name="batch_file_error">[could not transcribe this file: %1$s]</string>
+
+    <!-- Detected language (W3-F) -->
+    <string name="detected_language">Detected language: %1$s</string>
 </resources>

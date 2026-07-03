@@ -17,6 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import io.whispershare.R
+import java.util.Locale
 
 sealed interface TranscribeUiState {
     data object Idle : TranscribeUiState
@@ -29,7 +30,17 @@ sealed interface TranscribeUiState {
         val progress: Float?,
         val fileLabel: String? = null
     ) : TranscribeUiState
-    data class Done(val text: String, val durationSec: Double, val elapsedMs: Long, val backend: String) : TranscribeUiState
+    /**
+     * [detectedLanguage] is the auto-detected ISO-639-1 code ("de"); null when
+     * the user picked a language explicitly or detection was unavailable.
+     */
+    data class Done(
+        val text: String,
+        val durationSec: Double,
+        val elapsedMs: Long,
+        val backend: String,
+        val detectedLanguage: String? = null
+    ) : TranscribeUiState
     data class Error(val message: String) : TranscribeUiState
 }
 
@@ -175,6 +186,19 @@ fun TranscribeScreen(
                                     state.durationSec / (state.elapsedMs / 1000.0).coerceAtLeast(0.001)
                                 ))
                             }
+                        )
+                    }
+                    if (state.detectedLanguage != null) {
+                        // Locale.displayLanguage localizes the name for the device
+                        // locale ("de" → "Deutsch" on a German device); unknown
+                        // codes fall through as the raw code.
+                        val languageName = Locale(state.detectedLanguage).displayLanguage
+                            .takeIf { it.isNotBlank() } ?: state.detectedLanguage
+                        Spacer(Modifier.height(8.dp))
+                        AssistChip(
+                            onClick = {},
+                            enabled = false,
+                            label = { Text(stringResource(R.string.detected_language, languageName)) }
                         )
                     }
                     Spacer(Modifier.height(16.dp))

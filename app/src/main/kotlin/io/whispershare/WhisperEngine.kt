@@ -128,6 +128,18 @@ object WhisperEngine {
     }
 
     /**
+     * ISO-639-1 code (e.g. "de") of the language whisper detected during the
+     * last completed [transcribe]; "" when unavailable (not loaded, no run
+     * yet, or the last run failed). Only meaningful right after a transcribe —
+     * call it before starting the next one. Serialized on the same mutex so
+     * it can't race a running transcription.
+     */
+    suspend fun detectedLanguage(): String = mutex.withLock {
+        val ptr = ctxPtr.get()
+        if (ptr == 0L) "" else nativeDetectedLanguage(ptr)
+    }
+
+    /**
      * Convenience: full load → transcribe → keep loaded. Used by [Benchmark] which
      * iterates many (model, gpu) combinations.
      */
@@ -163,6 +175,11 @@ object WhisperEngine {
      * the flag resets at the start of each transcribe.
      */
     private external fun nativeRequestAbort(ctxPtr: Long)
+    /**
+     * Language code detected by the last completed transcribe, "" if none;
+     * the stored id resets at the start of each transcribe.
+     */
+    private external fun nativeDetectedLanguage(ctxPtr: Long): String
     private external fun nativeBackendInfo(): String
     private external fun nativeLastError(): String
 }

@@ -326,6 +326,12 @@ class TranscriptionService : Service() {
         val multi = uris.size > 1
         val combined = StringBuilder()
         var totalDurationSec = 0.0
+        // Detected-language codes of the successful files, only collected when
+        // the user's language setting is auto-detect. Shown in Done only when
+        // unambiguous (all files agree); mixed-language batches show nothing
+        // rather than a misleading single language.
+        val autoDetect = prefs.language.isBlank()
+        val detectedCodes = mutableSetOf<String>()
         val started = System.currentTimeMillis()
         for ((index, uri) in uris.withIndex()) {
             val fileLabel =
@@ -342,6 +348,11 @@ class TranscriptionService : Service() {
                 val (text, durationSec) = transcribeOne(uri, combined.toString(), fileLabel)
                 totalDurationSec += durationSec
                 combined.append(text.ifBlank { getString(R.string.no_speech_detected) })
+                if (autoDetect) {
+                    WhisperEngine.detectedLanguage()
+                        .takeIf { it.isNotBlank() }
+                        ?.let { detectedCodes.add(it) }
+                }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
@@ -357,7 +368,8 @@ class TranscriptionService : Service() {
             text = listOfNotNull(notice, combined.toString()).joinToString("\n\n"),
             durationSec = totalDurationSec,
             elapsedMs = ms,
-            backend = WhisperEngine.activeBackend
+            backend = WhisperEngine.activeBackend,
+            detectedLanguage = detectedCodes.singleOrNull()
         )
     }
 
