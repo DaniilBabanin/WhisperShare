@@ -43,6 +43,10 @@ certificate SHA-256 (pin it in Obtainium to verify updates):
 1601abb6092cc3cc58ee2237995eabc60c59688d107caabb36a4a7e6bf8b1251
 ```
 
+The signing key is committed to this repository, so the signature proves
+reproducibility ("built from this repo"), not origin — only install releases
+from this GitHub repository.
+
 ---
 
 ## Usage
