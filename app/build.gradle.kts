@@ -17,8 +17,8 @@ android {
         applicationId = "io.whispershare"
         minSdk = 31           // Android 12 — covers Pixel 9 easily
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.2.0-rc1"
+        versionCode = 6
+        versionName = "0.2.0"
 
         ndk {
             // Pixel 9 is arm64. Drop the others to keep APK small.
