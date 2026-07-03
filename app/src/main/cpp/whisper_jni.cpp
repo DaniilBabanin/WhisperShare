@@ -44,6 +44,23 @@ std::atomic<bool> g_abort_requested{false};
 // nativeDetectedLanguage — possibly from another thread, hence atomic.
 std::atomic<int> g_detected_lang_id{-1};
 
+// Absolute path of the Silero VAD model applied to subsequent transcriptions,
+// empty = VAD disabled. Written by nativeSetVadModelPath, read by
+// nativeTranscribe — Kotlin serializes both on the engine mutex, but nothing
+// in this file enforces that, so guard with a mutex like the error stash.
+std::mutex g_vad_path_mutex;
+std::string g_vad_model_path;
+
+void set_vad_model_path(const std::string &path) {
+    std::lock_guard<std::mutex> lock(g_vad_path_mutex);
+    g_vad_model_path = path;
+}
+
+std::string get_vad_model_path() {
+    std::lock_guard<std::mutex> lock(g_vad_path_mutex);
+    return g_vad_model_path;
+}
+
 struct CallbackCtx {
     JNIEnv  *env;
     jobject  callback;
@@ -203,6 +220,18 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     };
     params.abort_callback_user_data = nullptr;
 
+    // Optional Silero VAD preprocessing. Kotlin only sets a non-empty path
+    // after validating the file (exists + GGML magic) — an unusable model
+    // would make whisper_full fail the whole run instead of falling back.
+    // The local copy must outlive whisper_full: params keeps a raw pointer.
+    // Default params.vad_params (whisper_vad_default_params) are fine.
+    std::string vad_model_path = get_vad_model_path();
+    if (!vad_model_path.empty()) {
+        params.vad            = true;
+        params.vad_model_path = vad_model_path.c_str();
+        LOGI("VAD enabled: %s", vad_model_path.c_str());
+    }
+
     const char *lang = nullptr;
     if (language != nullptr) {
         lang = env->GetStringUTFChars(language, nullptr);
@@ -307,6 +336,26 @@ Java_io_whispershare_WhisperEngine_nativeRequestAbort(
     // Engine holds one context; a single process-global flag is enough.
     // Picked up by the abort_callback wired in nativeTranscribe.
     g_abort_requested.store(true, std::memory_order_relaxed);
+}
+
+JNIEXPORT void JNICALL
+Java_io_whispershare_WhisperEngine_nativeSetVadModelPath(
+        JNIEnv *env, jobject /*thiz*/, jstring path) {
+    // Empty (or null) disables VAD. Applied by the next nativeTranscribe;
+    // a run already in flight keeps its own copy of the previous value.
+    std::string value;
+    if (path != nullptr) {
+        const char *chars = env->GetStringUTFChars(path, nullptr);
+        if (chars == nullptr) {
+            // OOM: GetStringUTFChars returned null and may have thrown.
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            LOGE("nativeSetVadModelPath: GetStringUTFChars returned null");
+            return; // keep the previous value; Kotlin re-sets it every run
+        }
+        value = chars;
+        env->ReleaseStringUTFChars(path, chars);
+    }
+    set_vad_model_path(value);
 }
 
 } // extern "C"

@@ -148,4 +148,9 @@
     <string name="history_source_files">%1$d Dateien</string>
     <string name="history_source_unknown">Audiodatei</string>
     <string name="history_entry_subtitle">%1$s · %2$.1fs</string>
+    <!-- Voice activity detection (W3-G) -->
+    <string name="vad_title">Stille überspringen (VAD)</string>
+    <string name="vad_subtitle">Erkennt Sprache mit Silero VAD und transkribiert nur die gesprochenen Abschnitte. Schneller bei Aufnahmen mit langen Pausen; benötigt einen einmaligen Modell-Download (ca. 1 MB).</string>
+    <string name="vad_download_button">VAD-Modell herunterladen</string>
+    <string name="vad_model_missing">VAD-Modell noch nicht heruntergeladen — Transkriptionen laufen ohne VAD, bis der Download abgeschlossen ist.</string>
 </resources>

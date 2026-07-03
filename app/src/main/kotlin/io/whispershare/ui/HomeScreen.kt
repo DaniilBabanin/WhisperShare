@@ -37,6 +37,9 @@ data class HomeUiState(
     val translateToEnglish: Boolean,
     val threads: Int,
     val highQuality: Boolean,
+    val vadEnabled: Boolean = false,
+    val vadModelInstalled: Boolean = false,
+    val vadDownloadProgress: ModelManager.DownloadProgress? = null,
     val developerMode: Boolean = false,
     val skipModelVerification: Boolean = false,
     val errorMessage: String? = null
@@ -56,6 +59,9 @@ fun HomeScreen(
     onToggleTranslate: (Boolean) -> Unit,
     onSetThreads: (Int) -> Unit,
     onToggleHighQuality: (Boolean) -> Unit,
+    onToggleVad: (Boolean) -> Unit,
+    onDownloadVadModel: () -> Unit,
+    onCancelVadDownload: () -> Unit,
     onSetDeveloperMode: (Boolean) -> Unit,
     onToggleSkipModelVerification: (Boolean) -> Unit,
     onOpenBenchmark: () -> Unit,
@@ -187,6 +193,70 @@ fun HomeScreen(
                     )
                 }
                 Switch(checked = state.highQuality, onCheckedChange = onToggleHighQuality)
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.vad_title), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.vad_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = state.vadEnabled, onCheckedChange = onToggleVad)
+            }
+
+            // Enabling VAD auto-starts the model download; this row surfaces its
+            // progress and offers a retry when a previous attempt failed.
+            if (state.vadEnabled && !state.vadModelInstalled) {
+                when (val progress = state.vadDownloadProgress) {
+                    is ModelManager.DownloadProgress.Percent -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                LinearProgressIndicator(
+                                    progress = { progress.percent / 100f },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text("${progress.percent}%", style = MaterialTheme.typography.bodySmall)
+                            }
+                            IconButton(onClick = onCancelVadDownload) {
+                                Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.cancel_download_cd))
+                            }
+                        }
+                    }
+                    is ModelManager.DownloadProgress.DownloadedMb -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                Text(
+                                    stringResource(R.string.download_progress_mb, progress.mb),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            IconButton(onClick = onCancelVadDownload) {
+                                Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.cancel_download_cd))
+                            }
+                        }
+                    }
+                    null -> {
+                        Text(
+                            stringResource(R.string.vad_model_missing),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedButton(
+                            onClick = onDownloadVadModel,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                        ) {
+                            Icon(Icons.Outlined.CloudDownload, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.vad_download_button))
+                        }
+                    }
+                }
             }
 
             if (state.developerMode) {

@@ -149,4 +149,9 @@
     <string name="history_source_files">%1$d files</string>
     <string name="history_source_unknown">Audio file</string>
     <string name="history_entry_subtitle">%1$s · %2$.1fs</string>
+    <!-- Voice activity detection (W3-G) -->
+    <string name="vad_title">Skip silence (VAD)</string>
+    <string name="vad_subtitle">Detects speech with Silero VAD and transcribes only the spoken parts. Faster on recordings with long pauses; needs a one-time ~1 MB model download.</string>
+    <string name="vad_download_button">Download VAD model</string>
+    <string name="vad_model_missing">VAD model not downloaded yet — transcriptions run without it until the download finishes.</string>
 </resources>

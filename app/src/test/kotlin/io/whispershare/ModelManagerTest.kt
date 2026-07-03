@@ -162,6 +162,39 @@ class ModelManagerTest {
         }
     }
 
+    // ---------- VAD model (W3-G) ----------
+
+    @Test
+    fun `vad model downloads from the ggml-org whisper-vad repo`() {
+        assertEquals(
+            "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin",
+            ModelManager.VAD_MODEL_URL
+        )
+    }
+
+    @Test
+    fun `vad model sha256 is well-formed`() {
+        assertTrue(ModelManager.VAD_MODEL_SHA256.matches(Regex("[0-9a-f]{64}")))
+    }
+
+    @Test
+    fun `vad model filename does not collide with built-in models`() {
+        for (m in ModelManager.BuiltInModel.entries) {
+            assertFalse(m.filename == ModelManager.VAD_MODEL_FILENAME)
+        }
+    }
+
+    @Test
+    fun `usable vad model requires existing file with ggml magic`() {
+        val valid = fileWith(byteArrayOf(0x6c, 0x6d, 0x67, 0x67) + ByteArray(64))
+        assertTrue(ModelManager.isUsableVadModel(valid))
+
+        val wrongMagic = fileWith(byteArrayOf(0x67, 0x67, 0x6d, 0x6c) + ByteArray(64))
+        assertFalse(ModelManager.isUsableVadModel(wrongMagic))
+
+        assertFalse(ModelManager.isUsableVadModel(File(tmp.root, "does-not-exist.bin")))
+    }
+
     // ---------- parseContentRange ----------
 
     @Test

@@ -34,6 +34,15 @@ object WhisperEngine {
      */
     private val mutex = Mutex()
 
+    /**
+     * Absolute path of the Silero VAD model to apply to every transcription,
+     * null = VAD off. Seeded at process start (WhisperApp) from the vadEnabled
+     * preference and re-pushed when the user toggles the setting. Re-validated
+     * per transcribe: a missing/invalid file logs and runs without VAD instead
+     * of failing the run.
+     */
+    @Volatile var vadModelPath: String? = null
+
     val isLoaded: Boolean get() = ctxPtr.get() != 0L
     /** "vulkan" if the binary was compiled with Vulkan support, else "cpu". */
     val compiledBackend: String get() = nativeBackendInfo()
@@ -118,6 +127,7 @@ object WhisperEngine {
             }
             try {
                 withContext(Dispatchers.IO) {
+                    nativeSetVadModelPath(resolveVadModelPath())
                     nativeTranscribe(ptr, pcm16k, language ?: "", translate, threads, highQuality, cb)
                 }
             } finally {
@@ -125,6 +135,19 @@ object WhisperEngine {
                 watcher.cancel()
             }
         }
+    }
+
+    /**
+     * Validated VAD model path for this run, "" = VAD off. Called on
+     * Dispatchers.IO (reads 4 bytes off disk). whisper_full fails the whole
+     * run when its VAD init fails, so an unusable file falls back to a plain
+     * transcription here instead.
+     */
+    private fun resolveVadModelPath(): String {
+        val path = vadModelPath ?: return ""
+        if (ModelManager.isUsableVadModel(File(path))) return path
+        Log.w(TAG, "VAD model missing or invalid at $path — transcribing without VAD")
+        return ""
     }
 
     /**
@@ -175,6 +198,11 @@ object WhisperEngine {
      * the flag resets at the start of each transcribe.
      */
     private external fun nativeRequestAbort(ctxPtr: Long)
+    /**
+     * Sets the mutex-guarded native VAD model path; "" disables VAD. Applied
+     * by the next nativeTranscribe (called before every run, same mutex).
+     */
+    private external fun nativeSetVadModelPath(path: String)
     /**
      * Language code detected by the last completed transcribe, "" if none;
      * the stored id resets at the start of each transcribe.
