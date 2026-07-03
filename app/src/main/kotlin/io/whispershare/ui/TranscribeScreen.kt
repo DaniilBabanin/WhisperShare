@@ -20,9 +20,15 @@ import io.whispershare.R
 
 sealed interface TranscribeUiState {
     data object Idle : TranscribeUiState
-    data class Stage(val stage: String, val progress: Float?) : TranscribeUiState
+    /** [fileLabel] is the batch position ("File 2 of 3"); null for single files. */
+    data class Stage(val stage: String, val progress: Float?, val fileLabel: String? = null) : TranscribeUiState
     /** In-flight transcription with partial text + optional progress (0..1). */
-    data class Streaming(val partial: String, val durationSec: Double, val progress: Float?) : TranscribeUiState
+    data class Streaming(
+        val partial: String,
+        val durationSec: Double,
+        val progress: Float?,
+        val fileLabel: String? = null
+    ) : TranscribeUiState
     data class Done(val text: String, val durationSec: Double, val elapsedMs: Long, val backend: String) : TranscribeUiState
     data class Error(val message: String) : TranscribeUiState
 }
@@ -65,6 +71,14 @@ fun TranscribeScreen(
 
                 is TranscribeUiState.Stage -> {
                     Spacer(Modifier.height(24.dp))
+                    if (state.fileLabel != null) {
+                        Text(
+                            state.fileLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
                     if (state.progress != null) {
                         LinearProgressIndicator(
                             progress = { state.progress },
@@ -85,6 +99,14 @@ fun TranscribeScreen(
 
                 is TranscribeUiState.Streaming -> {
                     Spacer(Modifier.height(8.dp))
+                    if (state.fileLabel != null) {
+                        Text(
+                            state.fileLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
                     if (state.progress != null) {
                         LinearProgressIndicator(
                             progress = { state.progress },
