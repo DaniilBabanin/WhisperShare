@@ -12,6 +12,14 @@ class WhisperApp : Application() {
         // Eagerly load native lib so the share path is fast.
         runCatching { System.loadLibrary("whispershare") }
 
+        // Seed the engine's VAD config: share-launched processes never run
+        // MainActivity, so the preference must be pushed here. Re-pushed by
+        // HomeViewModel whenever the user toggles it. The engine re-validates
+        // the file per transcribe, so a missing download is harmless.
+        WhisperEngine.vadModelPath =
+            if (AppPreferences(this).vadEnabled) ModelManager.vadModelFile(this).absolutePath
+            else null
+
         // Crash-crumb: if a previous GPU run aborted the process (e.g.
         // ggml_abort or vk::DeviceLostError on Mali), force CPU on next launch
         // so the user doesn't loop into the same crash. With the pipeline in a

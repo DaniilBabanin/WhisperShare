@@ -45,6 +45,11 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_HIGH_QUALITY, false)
         set(value) = prefs.edit { putBoolean(KEY_HIGH_QUALITY, value) }
 
+    /** Silero VAD preprocessing: transcribe only detected speech segments. Needs the VAD model download. */
+    var vadEnabled: Boolean
+        get() = prefs.getBoolean(KEY_VAD_ENABLED, false)
+        set(value) = prefs.edit { putBoolean(KEY_VAD_ENABLED, value) }
+
     /** Reveals advanced controls (thread slider, benchmark). Toggled by tapping the home tip. */
     var developerMode: Boolean
         get() = prefs.getBoolean(KEY_DEV_MODE, false)
@@ -77,6 +82,7 @@ class AppPreferences(context: Context) {
         private const val KEY_GPU = "use_gpu"
         private const val KEY_THREADS = "threads"
         private const val KEY_HIGH_QUALITY = "high_quality"
+        private const val KEY_VAD_ENABLED = "vad_enabled"
         private const val KEY_DEV_MODE = "developer_mode"
         private const val KEY_SKIP_VERIFY = "skip_model_verification"
         private const val KEY_GPU_CRASHED = "gpu_crashed_notice"

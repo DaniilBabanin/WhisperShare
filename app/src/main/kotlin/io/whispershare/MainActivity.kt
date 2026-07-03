@@ -49,6 +49,9 @@ class MainActivity : ComponentActivity() {
                     onToggleTranslate = vm::toggleTranslate,
                     onSetThreads = vm::setThreads,
                     onToggleHighQuality = vm::toggleHighQuality,
+                    onToggleVad = vm::toggleVad,
+                    onDownloadVadModel = vm::downloadVadModel,
+                    onCancelVadDownload = vm::cancelVadDownload,
                     onSetDeveloperMode = vm::setDeveloperMode,
                     onToggleSkipModelVerification = vm::toggleSkipModelVerification,
                     onOpenBenchmark = {
@@ -88,6 +91,7 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
         translateToEnglish = prefs.translateToEnglish,
         threads = prefs.threads,
         highQuality = prefs.highQuality,
+        vadEnabled = prefs.vadEnabled,
         developerMode = prefs.developerMode,
         skipModelVerification = prefs.skipModelVerification
     )
@@ -98,11 +102,17 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
 
     private suspend fun refreshInternal() {
         val ctx = getApplication<android.app.Application>()
-        val (entries, installed) = withContext(Dispatchers.IO) {
+        val (entries, installed, vadInstalled) = withContext(Dispatchers.IO) {
             val all = ModelManager.listAll(ctx)
-            all to all.filter { ModelManager.isDownloaded(ctx, it) }.map { it.id }.toSet()
+            Triple(
+                all,
+                all.filter { ModelManager.isDownloaded(ctx, it) }.map { it.id }.toSet(),
+                ModelManager.isVadModelDownloaded(ctx)
+            )
         }
-        _state.update { it.copy(entries = entries, installed = installed) }
+        _state.update {
+            it.copy(entries = entries, installed = installed, vadModelInstalled = vadInstalled)
+        }
     }
 
     fun selectModel(id: String) {
@@ -199,6 +209,50 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
         _state.update { it.copy(highQuality = enabled) }
     }
 
+    fun toggleVad(enabled: Boolean) {
+        prefs.vadEnabled = enabled
+        _state.update { it.copy(vadEnabled = enabled) }
+        val ctx = getApplication<android.app.Application>()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                // Engine re-validates the file per transcribe, so pushing a
+                // not-yet-downloaded path is fine (runs without VAD until then).
+                WhisperEngine.vadModelPath =
+                    if (enabled) ModelManager.vadModelFile(ctx).absolutePath else null
+            }
+            if (enabled && !_state.value.vadModelInstalled) downloadVadModel()
+        }
+    }
+
+    fun downloadVadModel() {
+        // Same dedup as [download]: ignore taps while a transfer is in flight.
+        if (downloadJobs.containsKey(VAD_JOB_ID)) return
+        val ctx = getApplication<android.app.Application>()
+        val job = viewModelScope.launch {
+            try {
+                ModelManager.downloadVadModel(ctx, verify = !prefs.skipModelVerification)
+                    .collect { progress ->
+                        _state.update { s -> s.copy(vadDownloadProgress = progress) }
+                    }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                _state.update { s -> s.copy(errorMessage = t.message) }
+            } finally {
+                downloadJobs.remove(VAD_JOB_ID)
+                withContext(NonCancellable) {
+                    _state.update { s -> s.copy(vadDownloadProgress = null) }
+                    refreshInternal()
+                }
+            }
+        }
+        downloadJobs[VAD_JOB_ID] = job
+    }
+
+    fun cancelVadDownload() {
+        downloadJobs[VAD_JOB_ID]?.cancel()
+    }
+
     fun setDeveloperMode(enabled: Boolean) {
         prefs.developerMode = enabled
         _state.update { it.copy(developerMode = enabled) }
@@ -207,5 +261,10 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
     fun toggleSkipModelVerification(enabled: Boolean) {
         prefs.skipModelVerification = enabled
         _state.update { it.copy(skipModelVerification = enabled) }
+    }
+
+    private companion object {
+        /** Reserved key in [downloadJobs] for the VAD model (never collides with entry ids). */
+        const val VAD_JOB_ID = "vad:silero"
     }
 }

@@ -47,6 +47,26 @@ object ModelManager {
      */
     private const val GGML_FILE_MAGIC = 0x67676d6c
 
+    // ---------- Silero VAD model (W3-G) ----------
+    // Special non-transcription download: never appears in listAll()/the model
+    // picker. whisper.cpp v1.8.4 hosts its converted VAD models in the
+    // ggml-org/whisper-vad HF repo (see models/download-vad-model.sh upstream),
+    // NOT in ggerganov/whisper.cpp. The file carries the same GGML magic as
+    // whisper models (checked by whisper_vad_init_with_params).
+
+    const val VAD_MODEL_FILENAME = "ggml-silero-v5.1.2.bin"
+
+    internal const val VAD_MODEL_URL =
+        "https://huggingface.co/ggml-org/whisper-vad/resolve/main/$VAD_MODEL_FILENAME"
+
+    /**
+     * SHA-256 of ggml-silero-v5.1.2.bin, cross-checked between the HF
+     * paths-info API and the raw git-LFS pointer (both report this value,
+     * size 885098 bytes).
+     */
+    internal const val VAD_MODEL_SHA256 =
+        "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf"
+
     // ---------- public types ----------
 
     sealed interface ModelEntry {
@@ -144,6 +164,24 @@ object ModelManager {
     fun isDownloaded(context: Context, entry: ModelEntry): Boolean =
         fileFor(context, entry).let { it.exists() && it.length() > 1_000_000 }
 
+    fun vadModelFile(context: Context): File =
+        File(modelsDir(context), VAD_MODEL_FILENAME)
+
+    /**
+     * The silero file is only ~0.9 MB, so the 1 MB whisper-model heuristic
+     * from [isDownloaded] would never pass — use a lower floor.
+     */
+    fun isVadModelDownloaded(context: Context): Boolean =
+        vadModelFile(context).let { it.exists() && it.length() > 500_000 }
+
+    /**
+     * Cheap pre-flight used by [WhisperEngine] right before a transcription:
+     * the file exists and starts with the GGML magic (the VAD ggml format
+     * shares it with whisper models). Any I/O error counts as unusable.
+     */
+    fun isUsableVadModel(file: File): Boolean =
+        runCatching { file.exists() && hasGgmlMagic(file) }.getOrDefault(false)
+
     // ---------- download (built-ins only) ----------
 
     /**
@@ -157,10 +195,20 @@ object ModelManager {
      * Cancelling the collector aborts the transfer and removes the .part file;
      * a transfer that fails on its own keeps it so the next attempt can resume.
      */
-    fun download(context: Context, model: BuiltInModel, verify: Boolean = true): Flow<DownloadProgress> = flow {
-        val target = fileFor(context, model)
+    fun download(context: Context, model: BuiltInModel, verify: Boolean = true): Flow<DownloadProgress> =
+        downloadFile(fileFor(context, model), URL(model.downloadUrl()), model.sha256, verify)
+
+    /** Same plumbing as [download] (Range-resume, SHA-256) for the Silero VAD model. */
+    fun downloadVadModel(context: Context, verify: Boolean = true): Flow<DownloadProgress> =
+        downloadFile(vadModelFile(context), URL(VAD_MODEL_URL), VAD_MODEL_SHA256, verify)
+
+    private fun downloadFile(
+        target: File,
+        url: URL,
+        expectedSha256: String,
+        verify: Boolean
+    ): Flow<DownloadProgress> = flow {
         val tmp = File(target.absolutePath + ".part")
-        val url = URL(model.downloadUrl())
 
         var conn: HttpURLConnection? = null
         try {
@@ -181,7 +229,7 @@ object ModelManager {
                 )
                 when (action) {
                     is ResumeAction.Append -> {
-                        Log.i(TAG, "Resuming ${model.filename} at $startOffset bytes")
+                        Log.i(TAG, "Resuming ${target.name} at $startOffset bytes")
                         total = action.total
                     }
                     ResumeAction.FullBody -> {
@@ -242,14 +290,14 @@ object ModelManager {
             // so a corrupt resume (appended onto a stale .part) is caught here.
             if (verify) {
                 val actual = sha256(tmp)
-                if (!actual.equals(model.sha256, ignoreCase = true)) {
+                if (!actual.equals(expectedSha256, ignoreCase = true)) {
                     tmp.delete() // never offer a corrupt file for another resume
                     throw IllegalStateException(
-                        "Checksum mismatch for ${model.filename}: expected ${model.sha256.take(12)}…, got ${actual.take(12)}…"
+                        "Checksum mismatch for ${target.name}: expected ${expectedSha256.take(12)}…, got ${actual.take(12)}…"
                     )
                 }
             } else {
-                Log.w(TAG, "SHA-256 verification skipped for ${model.filename} (developer override)")
+                Log.w(TAG, "SHA-256 verification skipped for ${target.name} (developer override)")
             }
 
             if (!tmp.renameTo(target)) {

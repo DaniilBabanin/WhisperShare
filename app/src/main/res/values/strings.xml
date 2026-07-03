@@ -133,4 +133,10 @@
 
     <!-- Detected language (W3-F) -->
     <string name="detected_language">Detected language: %1$s</string>
+
+    <!-- Voice activity detection (W3-G) -->
+    <string name="vad_title">Skip silence (VAD)</string>
+    <string name="vad_subtitle">Detects speech with Silero VAD and transcribes only the spoken parts. Faster on recordings with long pauses; needs a one-time ~1 MB model download.</string>
+    <string name="vad_download_button">Download VAD model</string>
+    <string name="vad_model_missing">VAD model not downloaded yet — transcriptions run without it until the download finishes.</string>
 </resources>
