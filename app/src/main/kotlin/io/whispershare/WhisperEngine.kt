@@ -103,6 +103,8 @@ object WhisperEngine {
      * @param translate true = translate non-English to English (English-only output)
      * @param threads CPU threads to use (ignored on GPU path)
      * @param highQuality switch sampling strategy from greedy → beam search (slower, more accurate)
+     * @param liveText split 16-90 s clips at silence boundaries so segments stream
+     *   in per piece — see [planChunks] for the speed tradeoff. Off = one native call.
      * @param onSegment fires per committed segment for streaming UI updates
      * @param onProgress fires periodically with 0..1 progress
      */
@@ -112,6 +114,7 @@ object WhisperEngine {
         translate: Boolean = false,
         threads: Int = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(2),
         highQuality: Boolean = false,
+        liveText: Boolean = false,
         onSegment: ((String) -> Unit)? = null,
         onProgress: ((Float) -> Unit)? = null
     ): String = mutex.withLock {
@@ -146,7 +149,7 @@ object WhisperEngine {
             try {
                 withContext(Dispatchers.IO) {
                     nativeSetVadModelPath(resolveVadModelPath())
-                    val bounds = planChunks(pcmFile, totalSamples)
+                    val bounds = if (liveText) planChunks(pcmFile, totalSamples) else longArrayOf(0, totalSamples)
                     val parts = ArrayList<String>(bounds.size - 1)
                     var lang = language ?: ""
                     for (i in 0 until bounds.size - 1) {

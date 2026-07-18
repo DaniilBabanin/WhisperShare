@@ -256,6 +256,7 @@ class TranscriptionService : Service() {
                         translate = prefs.translateToEnglish,
                         threads = prefs.resolvedThreads(),
                         highQuality = prefs.highQuality,
+                        liveText = prefs.liveText,
                         onSegment = { seg ->
                             builder.append(seg)
                             val partial = prefix + builder.toString()

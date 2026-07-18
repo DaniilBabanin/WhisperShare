@@ -55,6 +55,15 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_VAD_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_VAD_ENABLED, value) }
 
+    /**
+     * Stream text in while transcribing by splitting 16-90 s clips at silence
+     * boundaries. Off by default: each extra chunk pays whisper's fixed
+     * per-window encoder cost, so it trades a little total speed for liveness.
+     */
+    var liveText: Boolean
+        get() = prefs.getBoolean(KEY_LIVE_TEXT, false)
+        set(value) = prefs.edit { putBoolean(KEY_LIVE_TEXT, value) }
+
     /** Reveals advanced controls (thread slider, benchmark). Toggled by tapping the home tip. */
     var developerMode: Boolean
         get() = prefs.getBoolean(KEY_DEV_MODE, false)
@@ -88,6 +97,7 @@ class AppPreferences(context: Context) {
         private const val KEY_THREADS = "threads"
         private const val KEY_HIGH_QUALITY = "high_quality"
         private const val KEY_VAD_ENABLED = "vad_enabled"
+        private const val KEY_LIVE_TEXT = "live_text"
         private const val KEY_DEV_MODE = "developer_mode"
         private const val KEY_SKIP_VERIFY = "skip_model_verification"
         private const val KEY_GPU_CRASHED = "gpu_crashed_notice"

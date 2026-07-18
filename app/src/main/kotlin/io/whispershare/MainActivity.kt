@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
                     onToggleTranslate = vm::toggleTranslate,
                     onSetThreads = vm::setThreads,
                     onToggleHighQuality = vm::toggleHighQuality,
+                    onToggleLiveText = vm::toggleLiveText,
                     onToggleVad = vm::toggleVad,
                     onDownloadVadModel = vm::downloadVadModel,
                     onCancelVadDownload = vm::cancelVadDownload,
@@ -91,6 +92,7 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
         translateToEnglish = prefs.translateToEnglish,
         threads = prefs.threads,
         highQuality = prefs.highQuality,
+        liveText = prefs.liveText,
         vadEnabled = prefs.vadEnabled,
         developerMode = prefs.developerMode,
         skipModelVerification = prefs.skipModelVerification
@@ -207,6 +209,11 @@ class HomeViewModel(app: android.app.Application) : AndroidViewModel(app) {
     fun toggleHighQuality(enabled: Boolean) {
         prefs.highQuality = enabled
         _state.update { it.copy(highQuality = enabled) }
+    }
+
+    fun toggleLiveText(enabled: Boolean) {
+        prefs.liveText = enabled
+        _state.update { it.copy(liveText = enabled) }
     }
 
     fun toggleVad(enabled: Boolean) {

@@ -37,6 +37,7 @@ data class HomeUiState(
     val translateToEnglish: Boolean,
     val threads: Int,
     val highQuality: Boolean,
+    val liveText: Boolean = false,
     val vadEnabled: Boolean = false,
     val vadModelInstalled: Boolean = false,
     val vadDownloadProgress: ModelManager.DownloadProgress? = null,
@@ -59,6 +60,7 @@ fun HomeScreen(
     onToggleTranslate: (Boolean) -> Unit,
     onSetThreads: (Int) -> Unit,
     onToggleHighQuality: (Boolean) -> Unit,
+    onToggleLiveText: (Boolean) -> Unit,
     onToggleVad: (Boolean) -> Unit,
     onDownloadVadModel: () -> Unit,
     onCancelVadDownload: () -> Unit,
@@ -193,6 +195,20 @@ fun HomeScreen(
                     )
                 }
                 Switch(checked = state.highQuality, onCheckedChange = onToggleHighQuality)
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.live_text_title), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.live_text_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = state.liveText, onCheckedChange = onToggleLiveText)
             }
 
             Spacer(Modifier.height(12.dp))

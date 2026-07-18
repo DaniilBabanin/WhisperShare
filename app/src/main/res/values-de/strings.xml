@@ -149,6 +149,8 @@
     <string name="history_source_unknown">Audiodatei</string>
     <string name="history_entry_subtitle">%1$s · %2$.1fs</string>
     <!-- Voice activity detection (W3-G) -->
+    <string name="live_text_title">Live-Text</string>
+    <string name="live_text_subtitle">Text bereits während der Transkription anzeigen. Teilt kurze Aufnahmen an Pausen in kleinere Stücke — insgesamt etwas langsamer.</string>
     <string name="vad_title">Stille überspringen (VAD)</string>
     <string name="vad_subtitle">Erkennt Sprache mit Silero VAD und transkribiert nur die gesprochenen Abschnitte. Schneller bei Aufnahmen mit langen Pausen; benötigt einen einmaligen Modell-Download (ca. 1 MB).</string>
     <string name="vad_download_button">VAD-Modell herunterladen</string>
