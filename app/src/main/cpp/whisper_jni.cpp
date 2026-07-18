@@ -305,11 +305,15 @@ static jstring transcribe_pcm(
 // long clip never materializes as a Kotlin FloatArray plus a second JNI
 // pin/copy. The decoded floats are still held whole in RAM for whisper_full
 // (~230 MB/hour) — whisper.cpp windows the audio internally from there.
+// startSample/endSample (end exclusive, -1 = to EOF) let Kotlin feed the file
+// in silence-aligned pieces for streaming display.
 JNIEXPORT jstring JNICALL
 Java_io_whispershare_WhisperEngine_nativeTranscribeFile(
         JNIEnv *env, jobject /*thiz*/,
         jlong ctxPtr,
         jstring pcmPath,
+        jlong startSample,
+        jlong endSample,
         jstring language,
         jboolean translate,
         jint nThreads,
@@ -338,15 +342,24 @@ Java_io_whispershare_WhisperEngine_nativeTranscribeFile(
 
     fseek(f, 0, SEEK_END);
     const long file_samples = ftell(f) / 2;
-    fseek(f, 0, SEEK_SET);
+    long start = startSample < 0 ? 0 : (long) startSample;
+    if (start > file_samples) start = file_samples;
+    long end = (endSample < 0 || (long) endSample > file_samples) ? file_samples : (long) endSample;
+    if (end < start) end = start;
+    fseek(f, start * 2, SEEK_SET);
 
     // int16 → float: s / 32768.0f, the exact conversion the old FloatArray path used.
     std::vector<float> samples;
-    samples.reserve((size_t) file_samples);
+    samples.reserve((size_t) (end - start));
     int16_t buf[32 * 1024]; // 64 KB blocks
-    size_t got;
-    while ((got = fread(buf, 2, sizeof(buf) / sizeof(buf[0]), f)) > 0) {
+    long remaining = end - start;
+    const long buf_samples = (long) (sizeof(buf) / sizeof(buf[0]));
+    while (remaining > 0) {
+        size_t want = (size_t) (remaining < buf_samples ? remaining : buf_samples);
+        size_t got = fread(buf, 2, want, f);
+        if (got == 0) break;
         for (size_t i = 0; i < got; ++i) samples.push_back(buf[i] / 32768.0f);
+        remaining -= (long) got;
     }
     fclose(f);
 

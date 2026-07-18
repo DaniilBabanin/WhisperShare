@@ -1,10 +1,12 @@
 package io.whispershare
 
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -12,6 +14,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.abs
 
 /**
  * Thin Kotlin wrapper over the whisper.cpp JNI bridge.
@@ -21,6 +24,12 @@ import java.util.concurrent.atomic.AtomicLong
 object WhisperEngine {
 
     private const val TAG = "WhisperEngine"
+
+    // Chunked-streaming knobs — see planChunks() for the rationale.
+    private const val CHUNK_STREAM_MAX_SEC = 90
+    private const val CHUNK_MIN_SEC = 8
+    private const val CHUNK_MAX_SEC = 16
+    private const val SILENCE_FRAME_SAMPLES = 320 // 20 ms at 16 kHz
 
     private val ctxPtr = AtomicLong(0L)
     @Volatile private var loadedPath: String? = null
@@ -108,10 +117,17 @@ object WhisperEngine {
     ): String = mutex.withLock {
         val ptr = ctxPtr.get()
         check(ptr != 0L) { "WhisperEngine not loaded — call load() first" }
+        val totalSamples = pcmFile.length() / 2
+        // Per-chunk window the progress callback maps native 0..1 into, so the
+        // caller sees one monotonic overall progress across all chunks.
+        var progressBase = 0f
+        var progressSpan = 1f
         val cb = if (onSegment != null || onProgress != null) {
             TranscribeCallback().apply {
                 this.onSegment = onSegment
-                this.onProgress = onProgress
+                if (onProgress != null) {
+                    this.onProgress = { p -> onProgress((progressBase + p * progressSpan).coerceIn(0f, 1f)) }
+                }
             }
         } else null
         coroutineScope {
@@ -130,13 +146,98 @@ object WhisperEngine {
             try {
                 withContext(Dispatchers.IO) {
                     nativeSetVadModelPath(resolveVadModelPath())
-                    nativeTranscribeFile(ptr, pcmFile.absolutePath, language ?: "", translate, threads, highQuality, cb)
+                    val bounds = planChunks(pcmFile, totalSamples)
+                    val parts = ArrayList<String>(bounds.size - 1)
+                    var lang = language ?: ""
+                    for (i in 0 until bounds.size - 1) {
+                        // The abort flag resets on every native call, so a
+                        // cancellation that lands between chunks must be
+                        // caught here instead of relying on the flag.
+                        ensureActive()
+                        val start = bounds[i]
+                        val end = bounds[i + 1]
+                        progressBase = if (totalSamples > 0) start.toFloat() / totalSamples else 0f
+                        progressSpan = if (totalSamples > 0) (end - start).toFloat() / totalSamples else 1f
+                        parts += nativeTranscribeFile(
+                            ptr, pcmFile.absolutePath, start, end,
+                            lang, translate, threads, highQuality, cb
+                        )
+                        // Pin the auto-detected language after the first chunk so
+                        // a multi-chunk run can't flip languages mid-transcript.
+                        if (i == 0 && lang.isEmpty() && bounds.size > 2) {
+                            lang = nativeDetectedLanguage(ptr)
+                        }
+                    }
+                    parts.filter { it.isNotBlank() }.joinToString(" ")
                 }
             } finally {
                 finished.set(true)
                 watcher.cancel()
             }
         }
+    }
+
+    /**
+     * Streaming granularity: whisper_full fires its segment/progress callbacks
+     * only once per internal ~30 s window, so a typical voice note (< 30 s =
+     * one window) would display nothing until the very end. Clips up to
+     * [CHUNK_STREAM_MAX_SEC] are therefore split at silence-aligned boundaries
+     * into [CHUNK_MIN_SEC]..[CHUNK_MAX_SEC] second pieces, each its own
+     * whisper_full call — text streams in per piece. Every extra call pays
+     * whisper's fixed per-window encoder cost (~2.8 s CPU floor measured on a
+     * Pixel 9 in soundscript's 2026-06 spike), so longer clips — which already
+     * stream once per native window — stay a single call.
+     *
+     * Returns chunk boundaries as samples offsets: [0, c1, …, totalSamples].
+     */
+    @VisibleForTesting
+    internal fun planChunks(pcmFile: File, totalSamples: Long): LongArray {
+        val rate = AudioDecoder.TARGET_RATE.toLong()
+        if (totalSamples <= CHUNK_MAX_SEC * rate || totalSamples > CHUNK_STREAM_MAX_SEC * rate) {
+            return longArrayOf(0, totalSamples)
+        }
+
+        // Mean |amplitude| per 20 ms frame — enough resolution to find pauses.
+        val frameCount = (totalSamples / SILENCE_FRAME_SAMPLES).toInt()
+        val energy = FloatArray(frameCount)
+        pcmFile.inputStream().buffered(1 shl 16).use { input ->
+            val buf = ByteArray(SILENCE_FRAME_SAMPLES * 2)
+            frames@ for (f in 0 until frameCount) {
+                var read = 0
+                while (read < buf.size) {
+                    val n = input.read(buf, read, buf.size - read)
+                    if (n < 0) break@frames
+                    read += n
+                }
+                var sum = 0L
+                var i = 0
+                while (i < buf.size) {
+                    val v = (buf[i].toInt() and 0xFF) or (buf[i + 1].toInt() shl 8)
+                    sum += abs(v)
+                    i += 2
+                }
+                energy[f] = sum.toFloat() / SILENCE_FRAME_SAMPLES
+            }
+        }
+
+        val bounds = ArrayList<Long>()
+        bounds.add(0L)
+        var pos = 0L
+        while (totalSamples - pos > CHUNK_MAX_SEC * rate) {
+            // Cut at the quietest 20 ms frame in the allowed window — a real
+            // pause when there is one, the least-bad spot otherwise.
+            val lo = ((pos + CHUNK_MIN_SEC * rate) / SILENCE_FRAME_SAMPLES).toInt()
+            val hi = ((pos + CHUNK_MAX_SEC * rate) / SILENCE_FRAME_SAMPLES).toInt()
+                .coerceAtMost(energy.size - 1)
+            var best = lo
+            for (f in lo..hi) {
+                if (energy[f] < energy[best]) best = f
+            }
+            pos = best.toLong() * SILENCE_FRAME_SAMPLES
+            bounds.add(pos)
+        }
+        bounds.add(totalSamples)
+        return bounds.toLongArray()
     }
 
     /**
@@ -189,6 +290,8 @@ object WhisperEngine {
     private external fun nativeTranscribeFile(
         ctxPtr: Long,
         pcmPath: String,
+        startSample: Long,
+        endSample: Long,
         language: String,
         translate: Boolean,
         nThreads: Int,
