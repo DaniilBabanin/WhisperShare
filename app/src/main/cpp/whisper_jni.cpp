@@ -4,6 +4,8 @@
 #include <exception>
 #include <atomic>
 #include <mutex>
+#include <cstdint>
+#include <cstdio>
 #include <stdlib.h>
 #include <android/log.h>
 #include "whisper.h"
@@ -17,7 +19,7 @@ namespace {
 
 // Last native error stash — Kotlin polls this after any failure.
 // Most useful case: Vulkan vk::DeviceLostError (Mali drivers).
-// Written by nativeInitContext/nativeTranscribe, read by nativeLastError
+// Written by nativeInitContext/nativeTranscribeFile, read by nativeLastError
 // from other threads — guard all access with a mutex.
 std::mutex g_last_error_mutex;
 std::string g_last_error;
@@ -32,21 +34,21 @@ std::string get_last_error() {
     return g_last_error;
 }
 
-// Abort flag for nativeTranscribe. Engine is a singleton with one context,
+// Abort flag for nativeTranscribeFile. Engine is a singleton with one context,
 // so one process-global flag suffices. Set by nativeRequestAbort (any
 // thread), polled by whisper_full via params.abort_callback, reset at the
-// start of each nativeTranscribe.
+// start of each nativeTranscribeFile.
 std::atomic<bool> g_abort_requested{false};
 
 // Language id detected by the last *completed* transcription, -1 when
-// unavailable. Reset at the start of each nativeTranscribe (like the abort
+// unavailable. Reset at the start of each nativeTranscribeFile (like the abort
 // flag), written after a successful whisper_full, read by
 // nativeDetectedLanguage — possibly from another thread, hence atomic.
 std::atomic<int> g_detected_lang_id{-1};
 
 // Absolute path of the Silero VAD model applied to subsequent transcriptions,
 // empty = VAD disabled. Written by nativeSetVadModelPath, read by
-// nativeTranscribe — Kotlin serializes both on the engine mutex, but nothing
+// nativeTranscribeFile — Kotlin serializes both on the engine mutex, but nothing
 // in this file enforces that, so guard with a mutex like the error stash.
 std::mutex g_vad_path_mutex;
 std::string g_vad_model_path;
@@ -168,11 +170,13 @@ Java_io_whispershare_WhisperEngine_nativeFreeContext(
     }
 }
 
-JNIEXPORT jstring JNICALL
-Java_io_whispershare_WhisperEngine_nativeTranscribe(
-        JNIEnv *env, jobject /*thiz*/,
-        jlong ctxPtr,
-        jfloatArray pcm,
+// Shared whisper_full run for the transcription entry points — params, VAD,
+// callbacks and the error stash live here once.
+static jstring transcribe_pcm(
+        JNIEnv *env,
+        whisper_context *ctx,
+        const float *samples,
+        jsize n,
         jstring language,
         jboolean translate,
         jint nThreads,
@@ -184,21 +188,6 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     g_abort_requested.store(false, std::memory_order_relaxed);
     g_detected_lang_id.store(-1, std::memory_order_relaxed);
 
-    auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
-    if (ctx == nullptr) {
-        return env->NewStringUTF("");
-    }
-
-    jsize n = env->GetArrayLength(pcm);
-    jfloat *samples = env->GetFloatArrayElements(pcm, nullptr);
-    if (samples == nullptr) {
-        // OOM: GetFloatArrayElements returned null and may have thrown.
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        set_last_error("GetFloatArrayElements returned null (out of memory)");
-        LOGE("GetFloatArrayElements returned null");
-        return env->NewStringUTF("");
-    }
-
     whisper_full_params params = whisper_full_default_params(
             useBeam ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
     params.print_progress  = false;
@@ -208,11 +197,18 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     params.translate       = translate;
     params.n_threads       = nThreads;
     params.suppress_blank  = true;
+    params.suppress_nst    = true;   // drop non-speech tokens ([MUSIC], [BLANK_AUDIO]) at the source
     params.no_context      = true;
     params.single_segment  = false;
     if (useBeam) {
         params.beam_search.beam_size = 5;
     }
+
+    // No ISO code from Settings → auto-detect. whisper_full_default_params
+    // defaults language to "en", which silently ENGLISHES non-English audio on
+    // multilingual models (soundscript hit this with a German import coming
+    // back translated, 2026-07-13) — and kept detectedLanguage() pinned to "en".
+    params.language = "auto";
 
     // Poll the abort flag so Kotlin can cancel a running transcription.
     params.abort_callback = [](void * /*user_data*/) -> bool {
@@ -224,11 +220,18 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     // after validating the file (exists + GGML magic) — an unusable model
     // would make whisper_full fail the whole run instead of falling back.
     // The local copy must outlive whisper_full: params keeps a raw pointer.
-    // Default params.vad_params (whisper_vad_default_params) are fine.
+    // Params tuned to KEEP speech (low threshold + generous padding) rather
+    // than maximize silence skipped — values carried over from soundscript's
+    // 2026-07 tuning, where the 0.50 default threshold dropped soft speech.
     std::string vad_model_path = get_vad_model_path();
     if (!vad_model_path.empty()) {
         params.vad            = true;
         params.vad_model_path = vad_model_path.c_str();
+        params.vad_params     = whisper_vad_default_params();
+        params.vad_params.threshold               = 0.30f;  // default 0.50 — more permissive
+        params.vad_params.min_speech_duration_ms  = 100;
+        params.vad_params.min_silence_duration_ms = 600;    // only end a segment after a real pause
+        params.vad_params.speech_pad_ms           = 200;    // don't clip word onsets/offsets
         LOGI("VAD enabled: %s", vad_model_path.c_str());
     }
 
@@ -274,7 +277,6 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
         LOGE("native exception: unknown");
     }
 
-    env->ReleaseFloatArrayElements(pcm, samples, JNI_ABORT);
     if (lang) env->ReleaseStringUTFChars(language, lang);
 
     if (native_threw) {
@@ -297,6 +299,59 @@ Java_io_whispershare_WhisperEngine_nativeTranscribe(
     size_t start = out.find_first_not_of(" \t\n");
     if (start != std::string::npos) out = out.substr(start);
     return env->NewStringUTF(out.c_str());
+}
+
+// Reads mono 16 kHz int16 LE PCM straight from disk into a native buffer, so a
+// long clip never materializes as a Kotlin FloatArray plus a second JNI
+// pin/copy. The decoded floats are still held whole in RAM for whisper_full
+// (~230 MB/hour) — whisper.cpp windows the audio internally from there.
+JNIEXPORT jstring JNICALL
+Java_io_whispershare_WhisperEngine_nativeTranscribeFile(
+        JNIEnv *env, jobject /*thiz*/,
+        jlong ctxPtr,
+        jstring pcmPath,
+        jstring language,
+        jboolean translate,
+        jint nThreads,
+        jboolean useBeam,
+        jobject callback) {
+
+    auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
+    if (ctx == nullptr) {
+        return env->NewStringUTF("");
+    }
+
+    const char *path = pcmPath ? env->GetStringUTFChars(pcmPath, nullptr) : nullptr;
+    if (path == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        set_last_error("pcm path unavailable (out of memory?)");
+        LOGE("nativeTranscribeFile: pcm path unavailable");
+        return env->NewStringUTF("");
+    }
+    FILE *f = fopen(path, "rb");
+    env->ReleaseStringUTFChars(pcmPath, path);
+    if (f == nullptr) {
+        set_last_error("pcm file open failed");
+        LOGE("nativeTranscribeFile: pcm file open failed");
+        return env->NewStringUTF("");
+    }
+
+    fseek(f, 0, SEEK_END);
+    const long file_samples = ftell(f) / 2;
+    fseek(f, 0, SEEK_SET);
+
+    // int16 → float: s / 32768.0f, the exact conversion the old FloatArray path used.
+    std::vector<float> samples;
+    samples.reserve((size_t) file_samples);
+    int16_t buf[32 * 1024]; // 64 KB blocks
+    size_t got;
+    while ((got = fread(buf, 2, sizeof(buf) / sizeof(buf[0]), f)) > 0) {
+        for (size_t i = 0; i < got; ++i) samples.push_back(buf[i] / 32768.0f);
+    }
+    fclose(f);
+
+    return transcribe_pcm(env, ctx, samples.data(), (jsize) samples.size(), language, translate,
+                          nThreads, useBeam, callback);
 }
 
 JNIEXPORT jstring JNICALL
@@ -334,14 +389,14 @@ JNIEXPORT void JNICALL
 Java_io_whispershare_WhisperEngine_nativeRequestAbort(
         JNIEnv * /*env*/, jobject /*thiz*/, jlong /*ctxPtr*/) {
     // Engine holds one context; a single process-global flag is enough.
-    // Picked up by the abort_callback wired in nativeTranscribe.
+    // Picked up by the abort_callback wired in nativeTranscribeFile.
     g_abort_requested.store(true, std::memory_order_relaxed);
 }
 
 JNIEXPORT void JNICALL
 Java_io_whispershare_WhisperEngine_nativeSetVadModelPath(
         JNIEnv *env, jobject /*thiz*/, jstring path) {
-    // Empty (or null) disables VAD. Applied by the next nativeTranscribe;
+    // Empty (or null) disables VAD. Applied by the next nativeTranscribeFile;
     // a run already in flight keeps its own copy of the previous value.
     std::string value;
     if (path != nullptr) {

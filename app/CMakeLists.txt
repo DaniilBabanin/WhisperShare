@@ -87,6 +87,14 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     ${android-lib}
 )
 
+# NDK r27's toolchain no longer injects max-page-size, so the .so would link
+# with 4 KB LOAD segments — Google Play requires 16 KB alignment on Android 15+
+# devices (verified in soundscript 2026-06 via llvm-readelf after the same fix).
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384"
+)
+
 if(WHISPERSHARE_VULKAN)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE WHISPERSHARE_VULKAN=1)
 endif()

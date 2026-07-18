@@ -29,13 +29,13 @@ object Benchmark {
 
     suspend fun run(
         context: Context,
-        pcm: FloatArray,
+        pcm: AudioDecoder.DecodedPcm,
         models: List<ModelManager.ModelEntry>,
         includeGpu: Boolean,
         threads: Int,
         onProgress: (current: Int, total: Int, label: String) -> Unit
     ): List<BenchmarkResult> {
-        val durationSec = pcm.size / 16_000.0
+        val durationSec = pcm.durationSec
         val gpuAvailable = includeGpu && gpuSupported()
         val backends = if (gpuAvailable) listOf(false, true) else listOf(false)
         val total = models.size * backends.size
@@ -52,7 +52,7 @@ object Benchmark {
                     val res = WhisperEngine.runOnce(
                         modelFile = file,
                         useGpu = gpu,
-                        pcm16k = pcm,
+                        pcmFile = pcm.file,
                         threads = threads
                     )
                     val elapsed = System.currentTimeMillis() - started

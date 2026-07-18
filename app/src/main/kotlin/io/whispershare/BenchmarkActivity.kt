@@ -15,6 +15,7 @@ import io.whispershare.ui.BenchmarkUiState
 import io.whispershare.ui.theme.WhisperShareTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -90,19 +91,23 @@ class BenchmarkViewModel(app: android.app.Application) : AndroidViewModel(app) {
                     )
                 }
                 val pcm = AudioDecoder.decodeToPcmWithFallback(ctx, uri)
-                val results = Benchmark.run(
-                    context = ctx,
-                    pcm = pcm,
-                    models = installed,
-                    includeGpu = true,
-                    threads = prefs.resolvedThreads()
-                ) { current, total, label ->
-                    _state.update {
-                        it.copy(
-                            progress = if (total == 0) null else current.toFloat() / total,
-                            currentLabel = label.ifBlank { null }
-                        )
+                val results = try {
+                    Benchmark.run(
+                        context = ctx,
+                        pcm = pcm,
+                        models = installed,
+                        includeGpu = true,
+                        threads = prefs.resolvedThreads()
+                    ) { current, total, label ->
+                        _state.update {
+                            it.copy(
+                                progress = if (total == 0) null else current.toFloat() / total,
+                                currentLabel = label.ifBlank { null }
+                            )
+                        }
                     }
+                } finally {
+                    withContext(NonCancellable + Dispatchers.IO) { pcm.file.delete() }
                 }
                 _state.update {
                     it.copy(

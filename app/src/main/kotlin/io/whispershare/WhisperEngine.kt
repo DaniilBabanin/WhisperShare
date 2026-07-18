@@ -87,7 +87,9 @@ object WhisperEngine {
     }
 
     /**
-     * @param pcm16k mono float PCM at 16 kHz, range [-1.0, 1.0]
+     * @param pcmFile mono int16 LE PCM at 16 kHz on disk ([AudioDecoder.DecodedPcm.file]).
+     *   Read block-wise in native code, so a long clip never materializes as a Kotlin
+     *   FloatArray plus a second JNI pin/copy.
      * @param language ISO-639-1 like "en", "de"; null = auto-detect
      * @param translate true = translate non-English to English (English-only output)
      * @param threads CPU threads to use (ignored on GPU path)
@@ -96,7 +98,7 @@ object WhisperEngine {
      * @param onProgress fires periodically with 0..1 progress
      */
     suspend fun transcribe(
-        pcm16k: FloatArray,
+        pcmFile: File,
         language: String? = null,
         translate: Boolean = false,
         threads: Int = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(2),
@@ -128,7 +130,7 @@ object WhisperEngine {
             try {
                 withContext(Dispatchers.IO) {
                     nativeSetVadModelPath(resolveVadModelPath())
-                    nativeTranscribe(ptr, pcm16k, language ?: "", translate, threads, highQuality, cb)
+                    nativeTranscribeFile(ptr, pcmFile.absolutePath, language ?: "", translate, threads, highQuality, cb)
                 }
             } finally {
                 finished.set(true)
@@ -169,12 +171,12 @@ object WhisperEngine {
     suspend fun runOnce(
         modelFile: File,
         useGpu: Boolean,
-        pcm16k: FloatArray,
+        pcmFile: File,
         language: String? = null,
         threads: Int = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(2)
     ): Result<String> = try {
         load(modelFile, useGpu).getOrThrow()
-        Result.success(transcribe(pcm16k = pcm16k, language = language, translate = false, threads = threads))
+        Result.success(transcribe(pcmFile = pcmFile, language = language, translate = false, threads = threads))
     } catch (ce: CancellationException) {
         throw ce
     } catch (t: Throwable) {
@@ -184,9 +186,9 @@ object WhisperEngine {
     // ---------- native ----------
     private external fun nativeInitContext(modelPath: String, useGpu: Boolean): Long
     private external fun nativeFreeContext(ctxPtr: Long)
-    private external fun nativeTranscribe(
+    private external fun nativeTranscribeFile(
         ctxPtr: Long,
-        pcm: FloatArray,
+        pcmPath: String,
         language: String,
         translate: Boolean,
         nThreads: Int,
@@ -194,13 +196,13 @@ object WhisperEngine {
         callback: TranscribeCallback?
     ): String
     /**
-     * Sets an atomic abort flag polled by nativeTranscribe's abort_callback;
+     * Sets an atomic abort flag polled by nativeTranscribeFile's abort_callback;
      * the flag resets at the start of each transcribe.
      */
     private external fun nativeRequestAbort(ctxPtr: Long)
     /**
      * Sets the mutex-guarded native VAD model path; "" disables VAD. Applied
-     * by the next nativeTranscribe (called before every run, same mutex).
+     * by the next nativeTranscribeFile (called before every run, same mutex).
      */
     private external fun nativeSetVadModelPath(path: String)
     /**
@@ -210,6 +212,32 @@ object WhisperEngine {
     private external fun nativeDetectedLanguage(ctxPtr: Long): String
     private external fun nativeBackendInfo(): String
     private external fun nativeLastError(): String
+}
+
+/**
+ * Strip Whisper non-speech annotations so silence/music/noise never becomes transcript text:
+ * bracketed cues ([BLANK_AUDIO], [MUSIC PLAYING], [INAUDIBLE]…), starred cues (*laughs*), and a
+ * whitelist of parenthesized non-speech cues. Returns the remaining real speech, or "" when
+ * nothing's left (callers map "" → "(no speech detected)"). Real speech almost never contains
+ * [...] so bracket-stripping is safe; parentheses are only stripped for known non-speech words,
+ * to keep genuine asides like "call me (later)".
+ */
+fun stripNonSpeech(raw: String): String {
+    val cleaned = raw
+        .replace(Regex("\\[[^\\]]*]"), " ")
+        .replace(Regex("\\*[^*]*\\*"), " ")
+        .replace(
+            Regex(
+                "(?i)\\(\\s*(?:music|applause|laughter|laughs?|chuckles?|inaudible|silence|no audio|" +
+                    "blank[_ ]?audio|background noise|noise|sighs?|coughs?|breathing|static|beep|wind|" +
+                    "foreign language|speaking (?:in )?(?:a )?foreign language)\\s*\\)"
+            ),
+            " ",
+        )
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    // Whatever survives is real only if it has a letter or digit — drop lone punctuation like "[…]."→".".
+    return if (cleaned.any { it.isLetterOrDigit() }) cleaned else ""
 }
 
 /**

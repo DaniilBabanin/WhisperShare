@@ -234,12 +234,14 @@ class TranscriptionService : Service() {
          */
         suspend fun transcribeOne(uri: Uri, prefix: String, fileLabel: String?): Pair<String, Double> {
             var crumb: File? = null
+            _state.value = TranscribeUiState.Stage(
+                getString(R.string.stage_decoding_audio), null, fileLabel
+            )
+            // Streaming decode to a temp PCM file — the clip never lives in the
+            // Kotlin heap. Deleted in the finally below once transcribed.
+            val decoded = AudioDecoder.decodeToPcmWithFallback(ctx, uri)
             try {
-                _state.value = TranscribeUiState.Stage(
-                    getString(R.string.stage_decoding_audio), null, fileLabel
-                )
-                val pcm = AudioDecoder.decodeToPcmWithFallback(ctx, uri)
-                val durationSec = pcm.size / 16_000.0
+                val durationSec = decoded.durationSec
 
                 suspend fun runOnce(): String {
                     _state.value = TranscribeUiState.Stage(
@@ -249,7 +251,7 @@ class TranscriptionService : Service() {
                     )
                     val builder = StringBuilder()
                     return WhisperEngine.transcribe(
-                        pcm16k = pcm,
+                        pcmFile = decoded.file,
                         language = prefs.language.takeIf { it.isNotBlank() },
                         translate = prefs.translateToEnglish,
                         threads = prefs.resolvedThreads(),
@@ -314,14 +316,15 @@ class TranscriptionService : Service() {
                     }
                     text = runOnce()
                 }
-                return text to durationSec
+                return stripNonSpeech(text) to durationSec
             } finally {
                 // The crumb must only survive a hard native crash. Any path
                 // that reaches this finally means Kotlin is still alive, so
                 // delete it — otherwise the next launch misreports "GPU crash"
                 // and forces CPU.
-                crumb?.let { c ->
-                    withContext(NonCancellable + Dispatchers.IO) { c.delete() }
+                withContext(NonCancellable + Dispatchers.IO) {
+                    crumb?.delete()
+                    decoded.file.delete()
                 }
             }
         }
