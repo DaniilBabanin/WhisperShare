@@ -15,7 +15,12 @@ class AppPreferences(context: Context) {
         get() {
             val raw = prefs.getString(KEY_MODEL, DEFAULT_MODEL_ID) ?: DEFAULT_MODEL_ID
             return when {
-                raw.startsWith("builtin:") || raw.startsWith("custom:") -> raw
+                // A selected built-in that no longer exists (e.g. the removed
+                // large-v3-turbo) falls back to the default instead of erroring.
+                raw.startsWith("builtin:") ->
+                    if (runCatching { ModelManager.BuiltInModel.valueOf(raw.removePrefix("builtin:")) }.isSuccess) raw
+                    else DEFAULT_MODEL_ID
+                raw.startsWith("custom:") -> raw
                 runCatching { ModelManager.BuiltInModel.valueOf(raw) }.isSuccess -> "builtin:$raw"
                 else -> DEFAULT_MODEL_ID
             }

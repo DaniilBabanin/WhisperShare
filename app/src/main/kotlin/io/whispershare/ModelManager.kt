@@ -106,13 +106,10 @@ object ModelManager {
             190, true,
             "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
         ),
-        LARGE_V3_TURBO_Q5(
-            "Large v3 Turbo (multilingual, most accurate, high RAM use)",
-            "ggml-large-v3-turbo-q5_0.bin",
-            "ggml-large-v3-turbo-q5_0.bin",
-            574, true,
-            "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
-        ),
+        // large-v3-turbo was removed 2026-07: soundscript's long-form baseline
+        // showed it collapses on long continuous audio without VAD (dropped
+        // >half the audio), and large-v3 didn't beat medium-class models on
+        // clean speech. Small stays the accuracy ceiling on device.
         BASE_EN_Q5(
             "Base English-only (faster)",
             "ggml-base.en-q5_1.bin",
